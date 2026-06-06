@@ -6,9 +6,8 @@ from sqlalchemy import engine_from_config, pool
 from app.core.config import settings
 from app.db.base import Base
 
-# Importe os modelos aqui para que sejam registrados em Base.metadata
-# (adicionados a partir da Fase 1), ex.:
-# from app import models  # noqa: F401
+# Importa modelos para que sejam detectados pelo autogenerate
+import app.models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
