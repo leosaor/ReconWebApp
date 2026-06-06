@@ -1,23 +1,19 @@
 FROM python:3.12-slim
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+ENV PYTHONUNBUFFERED=1     PYTHONDONTWRITEBYTECODE=1     PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-# Dependências de sistema. As ferramentas de recon (subfinder, httpx, nmap)
-# são adicionadas nas Fases 2-4 na imagem do worker.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Dependencias de sistema + subfinder (Phase 2)
+ARG SUBFINDER_VERSION=2.6.6
+RUN apt-get update && apt-get install -y --no-install-recommends     curl     unzip     ca-certificates     && curl -sSL -o /tmp/subfinder.zip        https://github.com/projectdiscovery/subfinder/releases/download/v${SUBFINDER_VERSION}/subfinder_${SUBFINDER_VERSION}_linux_amd64.zip     && unzip /tmp/subfinder.zip -d /usr/local/bin subfinder     && chmod +x /usr/local/bin/subfinder     && rm /tmp/subfinder.zip     && apt-get purge -y unzip && apt-get autoremove -y     && rm -rf /var/lib/apt/lists/*
 
-# Instala dependências Python a partir do pyproject (camada cacheável).
+# Instala dependencias Python a partir do pyproject (camada cacheavel).
 COPY pyproject.toml ./
 COPY app ./app
 RUN pip install .
 
-# Usuário não-root.
+# Usuario nao-root.
 RUN useradd -m -u 1000 appuser
 USER appuser
 

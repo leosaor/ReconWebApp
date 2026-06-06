@@ -60,3 +60,10 @@ def _user_from_api_key(raw_key: str | None, db: Session) -> User | None:
     key_obj.last_used_at = datetime.now(timezone.utc)
     db.commit()
     return key_obj.user
+
+
+def require_writer(user: User = Depends(get_current_user)) -> User:
+    if user.role == UserRole.VIEWER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acesso negado")
+    return user
+

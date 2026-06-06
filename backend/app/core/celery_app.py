@@ -6,7 +6,7 @@ celery_app = Celery(
     "reconwebapp",
     broker=settings.broker_url,
     backend=settings.result_backend,
-    include=["app.tasks.sample"],
+    include=["app.tasks.sample", "app.tasks.recon"],
 )
 
 celery_app.conf.update(
