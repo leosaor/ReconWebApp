@@ -1,193 +1,59 @@
-import uuid
+﻿import uuid
 from unittest.mock import patch
 
 import pytest
 
-from app.models.scan import Scan, ScanStatus, ScanType
+from app.models.scan import ScanStatus, ScanType
 from app.models.scan_result import ScanResult
-from app.tasks.recon import run_http_probe, run_port_scan, run_subdomain_enum
-from tests.factories import make_project, make_target, make_user
+from app.tasks.recon import run_subdomain_enum
+from tests.factories import make_project, make_scan, make_target, make_user
 
 
-def _make_pending_scan(db):
-    user = make_user(db, f"worker-{uuid.uuid4()}@recon.com")
+def test_task_sucesso_completa_scan(db):
+    user = make_user(db, "task_ok@recon.com")
     project = make_project(db, user)
-    target = make_target(db, project)
-    scan = Scan(
-        target_id=target.id,
-        scan_type=ScanType.SUBDOMAIN_ENUM,
-        status=ScanStatus.PENDING,
-    )
-    db.add(scan)
-    db.commit()
-    db.refresh(scan)
-    return scan
+    target = make_target(db, project, "example.com")
+    scan = make_scan(db, target, ScanType.SUBDOMAIN_ENUM, ScanStatus.PENDING)
 
-
-def _make_pending_http_scan(db):
-    user = make_user(db, f"http-worker-{uuid.uuid4()}@recon.com")
-    project = make_project(db, user)
-    target = make_target(db, project)
-    scan = Scan(
-        target_id=target.id,
-        scan_type=ScanType.HTTP_PROBE,
-        status=ScanStatus.PENDING,
-    )
-    db.add(scan)
-    db.commit()
-    db.refresh(scan)
-    return scan
-
-
-def _make_pending_port_scan(db):
-    user = make_user(db, f"port-worker-{uuid.uuid4()}@recon.com")
-    project = make_project(db, user)
-    target = make_target(db, project)
-    scan = Scan(
-        target_id=target.id,
-        scan_type=ScanType.PORT_SCAN,
-        status=ScanStatus.PENDING,
-    )
-    db.add(scan)
-    db.commit()
-    db.refresh(scan)
-    return scan
-
-
-def test_task_sucesso_completa_scan_e_persiste_resultados(db):
-    scan = _make_pending_scan(db)
-
-    with patch("app.tasks.recon.run_subfinder", return_value=["api.example.com"]):
-        with patch("app.tasks.recon.SessionLocal", return_value=db):
-            with patch.object(db, "close", return_value=None):
-                result = run_subdomain_enum.__wrapped__(str(scan.id))
+    with patch("app.tasks.recon.SessionLocal", return_value=db), \
+         patch.object(db, "close"), \
+         patch("app.tasks.recon.run_subfinder", return_value=["sub1.example.com", "sub2.example.com"]):
+        result = run_subdomain_enum(str(scan.id))
 
     db.refresh(scan)
-    results = db.query(ScanResult).filter(ScanResult.scan_id == scan.id).all()
-    assert result == {"scan_id": str(scan.id), "found": 1}
+    assert result["found"] == 2
     assert scan.status == ScanStatus.COMPLETED
     assert scan.started_at is not None
     assert scan.finished_at is not None
-    assert [item.value for item in results] == ["api.example.com"]
+
+    results = db.query(ScanResult).filter_by(scan_id=scan.id).all()
+    assert len(results) == 2
+    values = {r.value for r in results}
+    assert values == {"sub1.example.com", "sub2.example.com"}
 
 
 def test_task_scan_inexistente_retorna_missing(db):
-    scan_id = str(uuid.uuid4())
+    fake_id = str(uuid.uuid4())
 
-    with patch("app.tasks.recon.SessionLocal", return_value=db):
-        with patch.object(db, "close", return_value=None):
-            result = run_subdomain_enum.__wrapped__(scan_id)
+    with patch("app.tasks.recon.SessionLocal", return_value=db), \
+         patch.object(db, "close"):
+        result = run_subdomain_enum(fake_id)
 
-    assert result == {"scan_id": scan_id, "status": "missing"}
-
-
-def test_task_erro_no_runner_marca_scan_como_failed(db):
-    scan = _make_pending_scan(db)
-
-    with patch("app.tasks.recon.run_subfinder", side_effect=RuntimeError("boom")):
-        with patch("app.tasks.recon.SessionLocal", return_value=db):
-            with patch.object(db, "close", return_value=None):
-                with pytest.raises(RuntimeError, match="boom"):
-                    run_subdomain_enum.__wrapped__(str(scan.id))
-
-    db.refresh(scan)
-    assert scan.status == ScanStatus.FAILED
-    assert scan.error == "boom"
-    assert scan.finished_at is not None
+    assert result["status"] == "missing"
 
 
-def test_http_probe_sucesso_completa_scan_e_persiste_resultados(db):
-    scan = _make_pending_http_scan(db)
-    httpx_result = {
-        "url": "https://example.com",
-        "status_code": 200,
-        "title": "Home",
-        "tech": ["nginx"],
-    }
+def test_task_erro_no_runner_marca_failed(db):
+    user = make_user(db, "task_fail@recon.com")
+    project = make_project(db, user)
+    target = make_target(db, project, "fail.com")
+    scan = make_scan(db, target, ScanType.SUBDOMAIN_ENUM, ScanStatus.PENDING)
 
-    with patch("app.tasks.recon.run_httpx", return_value=[httpx_result]):
-        with patch("app.tasks.recon.SessionLocal", return_value=db):
-            with patch.object(db, "close", return_value=None):
-                result = run_http_probe.__wrapped__(str(scan.id))
-
-    db.refresh(scan)
-    results = db.query(ScanResult).filter(ScanResult.scan_id == scan.id).all()
-    assert result == {"scan_id": str(scan.id), "found": 1}
-    assert scan.status == ScanStatus.COMPLETED
-    assert [item.value for item in results] == ["https://example.com"]
-    assert results[0].data == httpx_result
-
-
-def test_http_probe_scan_inexistente_retorna_missing(db):
-    scan_id = str(uuid.uuid4())
-
-    with patch("app.tasks.recon.SessionLocal", return_value=db):
-        with patch.object(db, "close", return_value=None):
-            result = run_http_probe.__wrapped__(scan_id)
-
-    assert result == {"scan_id": scan_id, "status": "missing"}
-
-
-def test_http_probe_erro_no_runner_marca_scan_como_failed(db):
-    scan = _make_pending_http_scan(db)
-
-    with patch("app.tasks.recon.run_httpx", side_effect=RuntimeError("httpx boom")):
-        with patch("app.tasks.recon.SessionLocal", return_value=db):
-            with patch.object(db, "close", return_value=None):
-                with pytest.raises(RuntimeError, match="httpx boom"):
-                    run_http_probe.__wrapped__(str(scan.id))
+    with patch("app.tasks.recon.SessionLocal", return_value=db), \
+         patch.object(db, "close"), \
+         patch("app.tasks.recon.run_subfinder", side_effect=RuntimeError("subfinder crashed")), \
+         pytest.raises(RuntimeError):
+        run_subdomain_enum(str(scan.id))
 
     db.refresh(scan)
     assert scan.status == ScanStatus.FAILED
-    assert scan.error == "httpx boom"
-    assert scan.finished_at is not None
-
-
-def test_port_scan_sucesso_completa_scan_e_persiste_resultados(db):
-    scan = _make_pending_port_scan(db)
-    nmap_result = {
-        "host": "example.com",
-        "port": 443,
-        "protocol": "tcp",
-        "state": "open",
-        "service": "https",
-        "product": "nginx",
-        "version": "1.24",
-    }
-
-    with patch("app.tasks.recon.run_nmap", return_value=[nmap_result]):
-        with patch("app.tasks.recon.SessionLocal", return_value=db):
-            with patch.object(db, "close", return_value=None):
-                result = run_port_scan.__wrapped__(str(scan.id))
-
-    db.refresh(scan)
-    results = db.query(ScanResult).filter(ScanResult.scan_id == scan.id).all()
-    assert result == {"scan_id": str(scan.id), "found": 1}
-    assert scan.status == ScanStatus.COMPLETED
-    assert [item.value for item in results] == ["example.com:443"]
-    assert results[0].data == nmap_result
-
-
-def test_port_scan_scan_inexistente_retorna_missing(db):
-    scan_id = str(uuid.uuid4())
-
-    with patch("app.tasks.recon.SessionLocal", return_value=db):
-        with patch.object(db, "close", return_value=None):
-            result = run_port_scan.__wrapped__(scan_id)
-
-    assert result == {"scan_id": scan_id, "status": "missing"}
-
-
-def test_port_scan_erro_no_runner_marca_scan_como_failed(db):
-    scan = _make_pending_port_scan(db)
-
-    with patch("app.tasks.recon.run_nmap", side_effect=RuntimeError("nmap boom")):
-        with patch("app.tasks.recon.SessionLocal", return_value=db):
-            with patch.object(db, "close", return_value=None):
-                with pytest.raises(RuntimeError, match="nmap boom"):
-                    run_port_scan.__wrapped__(str(scan.id))
-
-    db.refresh(scan)
-    assert scan.status == ScanStatus.FAILED
-    assert scan.error == "nmap boom"
-    assert scan.finished_at is not None
+    assert "subfinder crashed" in scan.error

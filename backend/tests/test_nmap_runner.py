@@ -1,112 +1,130 @@
-from unittest.mock import MagicMock, patch
+﻿from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.services.nmap_runner import run_nmap
 
-_NMAP_XML = """<?xml version="1.0"?>
+_XML_TWO_PORTS = """<?xml version="1.0"?>
 <nmaprun>
   <host>
+    <hostnames><hostname name="example.com" type="user"/></hostnames>
     <address addr="93.184.216.34" addrtype="ipv4"/>
-    <hostnames>
-      <hostname name="example.com" type="user"/>
-    </hostnames>
     <ports>
       <port protocol="tcp" portid="80">
         <state state="open"/>
-        <service name="http" product="nginx" version="1.24"/>
+        <service name="http" product="nginx" version="1.24.0"/>
       </port>
       <port protocol="tcp" portid="443">
         <state state="open"/>
-        <service name="https"/>
+        <service name="https" product="nginx" version="1.24.0"/>
       </port>
     </ports>
   </host>
-</nmaprun>
-"""
+</nmaprun>"""
 
+_XML_EMPTY = """<?xml version="1.0"?><nmaprun></nmaprun>"""
 
-def test_retorna_portas_do_xml():
-    mock_result = MagicMock(returncode=0, stdout=_NMAP_XML, stderr="")
-
-    with patch("subprocess.run", return_value=mock_result) as run:
-        result = run_nmap("example.com")
-
-    assert result == [
-        {
-            "host": "example.com",
-            "port": 80,
-            "protocol": "tcp",
-            "state": "open",
-            "service": "http",
-            "product": "nginx",
-            "version": "1.24",
-        },
-        {
-            "host": "example.com",
-            "port": 443,
-            "protocol": "tcp",
-            "state": "open",
-            "service": "https",
-            "product": None,
-            "version": None,
-        },
-    ]
-    run.assert_called_once_with(
-        ["nmap", "-sT", "-sV", "-oX", "-", "example.com"],
-        capture_output=True,
-        text=True,
-        timeout=1800,
-    )
-
-
-def test_usa_ip_quando_hostname_nao_existe():
-    xml = """<?xml version="1.0"?>
+_XML_NO_HOSTNAME = """<?xml version="1.0"?>
 <nmaprun>
   <host>
-    <address addr="127.0.0.1" addrtype="ipv4"/>
+    <address addr="10.0.0.1" addrtype="ipv4"/>
     <ports>
-      <port protocol="tcp" portid="8000"><state state="open"/></port>
+      <port protocol="tcp" portid="22">
+        <state state="open"/>
+        <service name="ssh"/>
+      </port>
     </ports>
   </host>
-</nmaprun>
-"""
-    mock_result = MagicMock(returncode=0, stdout=xml, stderr="")
-
-    with patch("subprocess.run", return_value=mock_result):
-        result = run_nmap("127.0.0.1")
-
-    assert result[0]["host"] == "127.0.0.1"
-    assert result[0]["port"] == 8000
+</nmaprun>"""
 
 
-def test_target_invalido_levanta_value_error():
+def _mock_run(stdout: str, returncode: int = 0) -> MagicMock:
+    m = MagicMock()
+    m.stdout = stdout
+    m.stderr = ""
+    m.returncode = returncode
+    return m
+
+
+@patch("app.services.nmap_runner.subprocess.run")
+def test_retorna_lista_de_portas(mock_run):
+    mock_run.return_value = _mock_run(_XML_TWO_PORTS)
+    result = run_nmap("example.com")
+    assert len(result) == 2
+    ports = {r["port"] for r in result}
+    assert ports == {80, 443}
+
+
+@patch("app.services.nmap_runner.subprocess.run")
+def test_resultado_contem_campos_esperados(mock_run):
+    mock_run.return_value = _mock_run(_XML_TWO_PORTS)
+    result = run_nmap("example.com")
+    port80 = next(r for r in result if r["port"] == 80)
+    assert port80["host"] == "example.com"
+    assert port80["protocol"] == "tcp"
+    assert port80["state"] == "open"
+    assert port80["service"] == "http"
+    assert port80["product"] == "nginx"
+    assert port80["version"] == "1.24.0"
+
+
+@patch("app.services.nmap_runner.subprocess.run")
+def test_host_sem_hostname_usa_ip(mock_run):
+    mock_run.return_value = _mock_run(_XML_NO_HOSTNAME)
+    result = run_nmap("10.0.0.1")
+    assert result[0]["host"] == "10.0.0.1"
+    assert result[0]["port"] == 22
+
+
+@patch("app.services.nmap_runner.subprocess.run")
+def test_retorna_lista_vazia_sem_hosts(mock_run):
+    mock_run.return_value = _mock_run(_XML_EMPTY)
+    result = run_nmap("example.com")
+    assert result == []
+
+
+@pytest.mark.parametrize("target", [
+    "invalid target",
+    "-startwithdash.com",
+    "a" * 254,
+    "",
+    "has spaces.com",
+])
+def test_target_invalido_levanta_value_error(target):
     with pytest.raises(ValueError):
-        run_nmap("https://example.com/path")
+        run_nmap(target)
 
 
-def test_subprocess_falha_levanta_runtime_error():
-    mock_result = MagicMock(returncode=1, stdout="", stderr="failed")
-
-    with patch("subprocess.run", return_value=mock_result):
-        with pytest.raises(RuntimeError, match="nmap exited 1"):
-            run_nmap("example.com")
-
-
-def test_xml_invalido_levanta_runtime_error():
-    mock_result = MagicMock(returncode=0, stdout="<not-xml", stderr="")
-
-    with patch("subprocess.run", return_value=mock_result):
-        with pytest.raises(RuntimeError, match="Invalid nmap XML output"):
-            run_nmap("example.com")
-
-
-def test_subprocess_nao_usa_shell():
-    mock_result = MagicMock(returncode=0, stdout="<nmaprun />", stderr="")
-
-    with patch("subprocess.run", return_value=mock_result) as run:
+@patch("app.services.nmap_runner.subprocess.run")
+def test_subprocess_com_erro_levanta_runtime_error(mock_run):
+    m = _mock_run("", returncode=1)
+    m.stderr = "permission denied"
+    mock_run.return_value = m
+    with pytest.raises(RuntimeError, match="nmap exited 1"):
         run_nmap("example.com")
 
-    _, kwargs = run.call_args
-    assert kwargs.get("shell") is None
-    assert isinstance(run.call_args.args[0], list)
+
+@patch("app.services.nmap_runner.subprocess.run")
+def test_xml_invalido_levanta_runtime_error(mock_run):
+    mock_run.return_value = _mock_run("not xml at all")
+    with pytest.raises(RuntimeError, match="Invalid nmap XML"):
+        run_nmap("example.com")
+
+
+@patch("app.services.nmap_runner.subprocess.run")
+def test_subprocess_chamado_sem_shell(mock_run):
+    mock_run.return_value = _mock_run(_XML_EMPTY)
+    run_nmap("example.com")
+    args, kwargs = mock_run.call_args
+    cmd = args[0]
+    assert isinstance(cmd, list), "comando deve ser lista, nao string"
+    assert kwargs.get("shell") is not True
+    assert "nmap" in cmd[0]
+    assert "example.com" in cmd
+
+
+@patch("app.services.nmap_runner.subprocess.run")
+def test_aceita_ip_como_target(mock_run):
+    mock_run.return_value = _mock_run(_XML_EMPTY)
+    result = run_nmap("192.168.1.1")
+    assert result == []

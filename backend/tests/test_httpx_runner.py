@@ -21,6 +21,30 @@ def test_retorna_resultados_jsonl():
     assert "-json" in run.call_args.args[0]
 
 
+def test_aceita_lista_de_targets_via_stdin():
+    mock_result = MagicMock(
+        returncode=0,
+        stdout='{"url":"https://api.example.com","status_code":200}\n',
+        stderr="",
+    )
+
+    with patch("subprocess.run", return_value=mock_result) as run:
+        result = run_httpx(["example.com", "api.example.com"])
+
+    assert result == [{"url": "https://api.example.com", "status_code": 200}]
+    assert run.call_args.args[0][:3] == ["httpx", "-l", "-"]
+    assert run.call_args.kwargs["input"] == "example.com\napi.example.com\n"
+
+
+def test_remove_targets_duplicados_preservando_ordem():
+    mock_result = MagicMock(returncode=0, stdout="", stderr="")
+
+    with patch("subprocess.run", return_value=mock_result) as run:
+        run_httpx(["example.com", "EXAMPLE.com", "api.example.com"])
+
+    assert run.call_args.kwargs["input"] == "example.com\napi.example.com\n"
+
+
 def test_ignora_linhas_vazias():
     mock_result = MagicMock(
         returncode=0,

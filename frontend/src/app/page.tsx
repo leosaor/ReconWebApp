@@ -46,14 +46,14 @@ export default function Home() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#06111f] px-6 py-10 text-slate-100">
       <section className="w-full max-w-md border border-white/10 bg-[#0a1f35] p-6 shadow-2xl shadow-black/20">
-        <div className="mb-8 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center border border-cyan-300/60 bg-cyan-300 text-sm font-black text-[#06111f]">
-            C
-          </div>
-          <div>
-            <p className="text-lg font-semibold uppercase">clavis</p>
-            <p className="text-xs uppercase text-cyan-200/70">Recon Surface</p>
-          </div>
+        <div className="mb-8">
+          <img
+            alt="Clavis"
+            className="h-auto w-36"
+            height="105"
+            src="/clavis-logo.svg"
+            width="301"
+          />
         </div>
 
         <div className="mb-8">
