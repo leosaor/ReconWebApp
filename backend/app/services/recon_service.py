@@ -118,11 +118,17 @@ def create_scan_and_enqueue(
     db.commit()
     db.refresh(scan)
 
-    from app.tasks.recon import run_http_probe, run_subdomain_enum  # lazy import to avoid circular
+    from app.tasks.recon import (
+        run_http_probe,
+        run_port_scan,
+        run_subdomain_enum,
+    )  # lazy import to avoid circular
 
     if scan_type == ScanType.SUBDOMAIN_ENUM:
         run_subdomain_enum.delay(str(scan.id))
     elif scan_type == ScanType.HTTP_PROBE:
         run_http_probe.delay(str(scan.id))
+    elif scan_type == ScanType.PORT_SCAN:
+        run_port_scan.delay(str(scan.id))
 
     return scan
