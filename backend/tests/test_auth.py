@@ -55,6 +55,13 @@ def test_login_retorna_access_token(client):
     assert r.cookies.get("refresh_token") is not None
 
 
+def test_login_aceita_username_sem_dominio(client):
+    _register(client, "usuario@recon.com")
+    r = client.post("/auth/login", json={"username": "usuario", "password": "senha1234"})
+    assert r.status_code == 200
+    assert "access_token" in r.json()
+
+
 def test_login_senha_errada_retorna_401(client):
     _register(client, "wrong@recon.com")
     r = client.post("/auth/login", json={"email": "wrong@recon.com", "password": "errada"})

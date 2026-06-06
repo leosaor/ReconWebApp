@@ -11,7 +11,9 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    identifier: str | None = Field(default=None, min_length=1)
+    email: EmailStr | None = None
+    username: str | None = Field(default=None, min_length=1)
     password: str
 
 

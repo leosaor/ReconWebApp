@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
+import sqlalchemy as sa
 from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session
 
@@ -38,7 +39,8 @@ def register_user(payload: RegisterRequest, db: Session, request: Request) -> Us
 
 
 def login_user(payload: LoginRequest, db: Session, request: Request) -> tuple[TokenResponse, str]:
-    user = db.query(User).filter(User.email == payload.email).first()
+    identifier = payload.identifier or payload.username or str(payload.email or "")
+    user = _find_user_for_login(db, identifier)
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas"
@@ -51,6 +53,19 @@ def login_user(payload: LoginRequest, db: Session, request: Request) -> tuple[To
     _audit(db, user_id=user.id, action="user.login", entity="user", entity_id=str(user.id), request=request)
     db.commit()
     return TokenResponse(access_token=access), refresh
+
+
+def _find_user_for_login(db: Session, identifier: str) -> User | None:
+    value = identifier.strip().lower()
+    if not value:
+        return None
+    if "@" in value:
+        return db.query(User).filter(sa.func.lower(User.email) == value).first()
+    return (
+        db.query(User)
+        .filter(sa.func.lower(sa.func.split_part(User.email, "@", 1)) == value)
+        .first()
+    )
 
 
 def create_api_key(name: str, user: User, db: Session, request: Request) -> ApiKeyCreated:
