@@ -5,6 +5,10 @@ import Home from "../page";
 describe("Home page", () => {
   it("renders the app title", () => {
     render(<Home />);
-    expect(screen.getByRole("heading", { name: /reconwebapp/i })).toBeDefined();
+    expect(
+      screen.getByRole("heading", {
+        name: /entrar na plataforma/i,
+      }),
+    ).toBeDefined();
   });
 });

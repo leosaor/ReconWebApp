@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ReconWebApp",
-  description: "Plataforma de reconhecimento automatizado para pentest",
+  title: "Clavis Recon Surface",
+  description: "Plataforma Clavis para reconhecimento automatizado autorizado",
 };
 
 export default function RootLayout({
@@ -13,7 +13,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="pt-BR">
-      <body className="bg-gray-950 text-gray-100 antialiased">{children}</body>
+      <body className="bg-[#06111f] text-slate-100 antialiased">{children}</body>
     </html>
   );
 }
