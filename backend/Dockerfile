@@ -4,9 +4,26 @@ ENV PYTHONUNBUFFERED=1     PYTHONDONTWRITEBYTECODE=1     PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-# Dependencias de sistema + subfinder (Phase 2)
+# Dependencias de sistema + ferramentas de recon.
 ARG SUBFINDER_VERSION=2.6.6
-RUN apt-get update && apt-get install -y --no-install-recommends     curl     unzip     ca-certificates     && curl -sSL -o /tmp/subfinder.zip        https://github.com/projectdiscovery/subfinder/releases/download/v${SUBFINDER_VERSION}/subfinder_${SUBFINDER_VERSION}_linux_amd64.zip     && unzip /tmp/subfinder.zip -d /usr/local/bin subfinder     && chmod +x /usr/local/bin/subfinder     && rm /tmp/subfinder.zip     && apt-get purge -y unzip && apt-get autoremove -y     && rm -rf /var/lib/apt/lists/*
+ARG HTTPX_VERSION=1.9.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    nmap \
+    unzip \
+    && curl -sSL -o /tmp/subfinder.zip \
+       https://github.com/projectdiscovery/subfinder/releases/download/v${SUBFINDER_VERSION}/subfinder_${SUBFINDER_VERSION}_linux_amd64.zip \
+    && unzip /tmp/subfinder.zip -d /usr/local/bin subfinder \
+    && chmod +x /usr/local/bin/subfinder \
+    && curl -sSL -o /tmp/httpx.zip \
+       https://github.com/projectdiscovery/httpx/releases/download/v${HTTPX_VERSION}/httpx_${HTTPX_VERSION}_linux_amd64.zip \
+    && unzip /tmp/httpx.zip -d /usr/local/bin httpx \
+    && chmod +x /usr/local/bin/httpx \
+    && rm /tmp/subfinder.zip /tmp/httpx.zip \
+    && apt-get purge -y unzip \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 # Instala dependencias Python a partir do pyproject (camada cacheavel).
 COPY pyproject.toml ./

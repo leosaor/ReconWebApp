@@ -2,12 +2,12 @@ import uuid
 
 from sqlalchemy.orm import Session
 
+from app.core.security import create_access_token
 from app.core.security import hash_password
 from app.models.project import Project
 from app.models.scan import Scan, ScanStatus, ScanType
 from app.models.target import Target
 from app.models.user import User, UserRole
-from app.services.auth_service import login_user
 
 
 def make_user(db: Session, email: str, role: UserRole = UserRole.PENTESTER) -> User:
@@ -24,8 +24,8 @@ def make_user(db: Session, email: str, role: UserRole = UserRole.PENTESTER) -> U
 
 
 def auth_headers(db: Session, user: User) -> dict:
-    token_resp, _ = login_user(db, user.email, "Password123!")
-    return {"Authorization": f"Bearer {token_resp.access_token}"}
+    token = create_access_token(str(user.id))
+    return {"Authorization": f"Bearer {token}"}
 
 
 def make_project(db: Session, owner: User, name: str = "Test Project") -> Project:
