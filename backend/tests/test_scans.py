@@ -25,6 +25,25 @@ def test_criar_scan_retorna_202_pending_e_enfileira_task(client, db):
     delay.assert_called_once_with(data["id"])
 
 
+def test_criar_http_probe_retorna_202_pending_e_enfileira_task(client, db):
+    user = make_user(db, "scan-http@recon.com")
+    project = make_project(db, user)
+    target = make_target(db, project)
+
+    with patch("app.tasks.recon.run_http_probe.delay") as delay:
+        response = client.post(
+            f"/api/v1/targets/{target.id}/scans",
+            json={"scan_type": "http_probe"},
+            headers=auth_headers(db, user),
+        )
+
+    assert response.status_code == 202
+    data = response.json()
+    assert data["status"] == ScanStatus.PENDING
+    assert data["scan_type"] == ScanType.HTTP_PROBE
+    delay.assert_called_once_with(data["id"])
+
+
 def test_criar_scan_com_target_fora_de_escopo_retorna_422(client, db):
     user = make_user(db, "scan-out-of-scope@recon.com")
     project = make_project(db, user)
