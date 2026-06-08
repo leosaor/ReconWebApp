@@ -16,10 +16,14 @@ def _validate_target(target: str) -> None:
         raise ValueError(f"Invalid target: {target!r}")
 
 
-def run_nmap(target: str) -> list[dict[str, Any]]:
-    _validate_target(target)
+def run_nmap(target: str | list[str]) -> list[dict[str, Any]]:
+    targets = [target] if isinstance(target, str) else list(target)
+    if not targets:
+        return []
+    for item in targets:
+        _validate_target(item)
     result = subprocess.run(
-        ["nmap", "-sT", "-sV", "-oX", "-", target],
+        ["nmap", "-sT", "-sV", "-oX", "-", *targets],
         capture_output=True,
         text=True,
         timeout=NMAP_TIMEOUT,

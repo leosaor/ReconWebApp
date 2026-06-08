@@ -6,8 +6,11 @@ from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.models.scan import Scan, ScanStatus, ScanType
 from app.models.scan_result import ScanResult
+from app.services.clickjacking_runner import run_clickjacking
+from app.services.domain_spoofing_runner import run_domain_spoofing
 from app.services.httpx_runner import run_httpx
 from app.services.nmap_runner import run_nmap
+from app.services.shcheck_runner import run_shcheck
 from app.services.subfinder_runner import run_subfinder
 
 
@@ -65,7 +68,8 @@ def _persist_port_results(db, scan: Scan, results: list[dict]) -> None:
     db.commit()
 
 
-def _http_probe_targets(db, scan: Scan) -> list[str]:
+def _aggregate_targets(db, scan: Scan) -> list[str]:
+    """Alvo principal + subdominios descobertos em subdomain_enum concluidos."""
     subdomains = (
         db.query(ScanResult.value)
         .join(Scan, ScanResult.scan_id == Scan.id)
@@ -125,10 +129,11 @@ def run_port_scan(self, scan_id: str) -> dict:
             return {"scan_id": scan_id, "status": "missing"}
 
         _mark_running(db, scan)
-        results = run_nmap(scan.target.value)
+        targets = _aggregate_targets(db, scan)
+        results = run_nmap(targets)
         _persist_port_results(db, scan, results)
         _mark_completed(db, scan)
-        return {"scan_id": scan_id, "found": len(results)}
+        return {"scan_id": scan_id, "targets": len(targets), "found": len(results)}
     except SoftTimeLimitExceeded:
         if scan:
             _mark_failed(db, scan, "timeout")
@@ -151,11 +156,98 @@ def run_http_probe(self, scan_id: str) -> dict:
             return {"scan_id": scan_id, "status": "missing"}
 
         _mark_running(db, scan)
-        targets = _http_probe_targets(db, scan)
+        targets = _aggregate_targets(db, scan)
         results = run_httpx(targets)
         _persist_http_results(db, scan, results)
         _mark_completed(db, scan)
         return {"scan_id": scan_id, "targets": len(targets), "found": len(results)}
+    except SoftTimeLimitExceeded:
+        if scan:
+            _mark_failed(db, scan, "timeout")
+        raise
+    except Exception as exc:  # noqa: BLE001
+        if scan:
+            _mark_failed(db, scan, str(exc))
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(name="recon.run_header_check", bind=True)
+def run_header_check(self, scan_id: str) -> dict:
+    db = SessionLocal()
+    scan = None
+    try:
+        scan = db.get(Scan, scan_id)
+        if scan is None:
+            return {"scan_id": scan_id, "status": "missing"}
+
+        _mark_running(db, scan)
+        results = run_shcheck(scan.target.value)
+        db.bulk_save_objects(
+            [ScanResult(scan_id=scan.id, value=r["url"], data=r) for r in results]
+        )
+        db.commit()
+        _mark_completed(db, scan)
+        return {"scan_id": scan_id, "found": len(results)}
+    except SoftTimeLimitExceeded:
+        if scan:
+            _mark_failed(db, scan, "timeout")
+        raise
+    except Exception as exc:  # noqa: BLE001
+        if scan:
+            _mark_failed(db, scan, str(exc))
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(name="recon.run_clickjacking", bind=True)
+def run_clickjacking_task(self, scan_id: str) -> dict:
+    db = SessionLocal()
+    scan = None
+    try:
+        scan = db.get(Scan, scan_id)
+        if scan is None:
+            return {"scan_id": scan_id, "status": "missing"}
+
+        _mark_running(db, scan)
+        results = run_clickjacking(scan.target.value)
+        db.bulk_save_objects(
+            [ScanResult(scan_id=scan.id, value=r["url"], data=r) for r in results]
+        )
+        db.commit()
+        _mark_completed(db, scan)
+        return {"scan_id": scan_id, "found": len(results)}
+    except SoftTimeLimitExceeded:
+        if scan:
+            _mark_failed(db, scan, "timeout")
+        raise
+    except Exception as exc:  # noqa: BLE001
+        if scan:
+            _mark_failed(db, scan, str(exc))
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(name="recon.run_domain_spoofing", bind=True)
+def run_domain_spoofing_task(self, scan_id: str) -> dict:
+    db = SessionLocal()
+    scan = None
+    try:
+        scan = db.get(Scan, scan_id)
+        if scan is None:
+            return {"scan_id": scan_id, "status": "missing"}
+
+        _mark_running(db, scan)
+        results = run_domain_spoofing(scan.target.value)
+        db.bulk_save_objects(
+            [ScanResult(scan_id=scan.id, value=r["check"], data=r) for r in results]
+        )
+        db.commit()
+        _mark_completed(db, scan)
+        return {"scan_id": scan_id, "found": len(results)}
     except SoftTimeLimitExceeded:
         if scan:
             _mark_failed(db, scan, "timeout")

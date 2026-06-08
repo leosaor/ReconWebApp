@@ -119,6 +119,9 @@ def create_scan_and_enqueue(
     db.refresh(scan)
 
     from app.tasks.recon import (
+        run_clickjacking_task,
+        run_domain_spoofing_task,
+        run_header_check,
         run_http_probe,
         run_port_scan,
         run_subdomain_enum,
@@ -130,5 +133,11 @@ def create_scan_and_enqueue(
         run_http_probe.delay(str(scan.id))
     elif scan_type == ScanType.PORT_SCAN:
         run_port_scan.delay(str(scan.id))
+    elif scan_type == ScanType.HEADER_CHECK:
+        run_header_check.delay(str(scan.id))
+    elif scan_type == ScanType.CLICKJACKING:
+        run_clickjacking_task.delay(str(scan.id))
+    elif scan_type == ScanType.DOMAIN_SPOOFING:
+        run_domain_spoofing_task.delay(str(scan.id))
 
     return scan

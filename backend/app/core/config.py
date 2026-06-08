@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     celery_broker_url: str | None = None
     celery_result_backend: str | None = None
 
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str] = ["*"]
 
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7

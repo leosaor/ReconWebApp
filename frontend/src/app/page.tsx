@@ -1,8 +1,9 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import Link from "next/link";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export default function Home() {
   const [error, setError] = useState("");
@@ -104,6 +105,13 @@ export default function Home() {
           >
             {loading ? "Entrando..." : "Entrar"}
           </button>
+
+          <p className="text-center text-sm text-slate-400">
+            Nao tem conta?{" "}
+            <Link className="font-medium text-cyan-200 hover:text-cyan-100" href="/register">
+              Criar conta
+            </Link>
+          </p>
         </form>
       </section>
     </main>

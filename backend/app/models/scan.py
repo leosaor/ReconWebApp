@@ -12,6 +12,9 @@ class ScanType(StrEnum):
     SUBDOMAIN_ENUM = "subdomain_enum"
     HTTP_PROBE = "http_probe"
     PORT_SCAN = "port_scan"
+    HEADER_CHECK = "header_check"
+    CLICKJACKING = "clickjacking"
+    DOMAIN_SPOOFING = "domain_spoofing"
 
 
 class ScanStatus(StrEnum):
@@ -34,10 +37,11 @@ class Scan(Base):
         index=True,
     )
     scan_type: Mapped[ScanType] = mapped_column(
-        sa.Enum(ScanType, name="scantype"), nullable=False
+        sa.Enum(ScanType, name="scantype", values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
     )
     status: Mapped[ScanStatus] = mapped_column(
-        sa.Enum(ScanStatus, name="scanstatus"),
+        sa.Enum(ScanStatus, name="scanstatus", values_callable=lambda x: [e.value for e in x]),
         default=ScanStatus.PENDING,
         nullable=False,
     )

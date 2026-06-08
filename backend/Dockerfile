@@ -1,6 +1,9 @@
 FROM python:3.12-slim
 
-ENV PYTHONUNBUFFERED=1     PYTHONDONTWRITEBYTECODE=1     PIP_NO_CACHE_DIR=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
 
@@ -10,6 +13,7 @@ ARG HTTPX_VERSION=1.9.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    dnsutils \
     nmap \
     unzip \
     && curl -sSL -o /tmp/subfinder.zip \
@@ -28,7 +32,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Instala dependencias Python a partir do pyproject (camada cacheavel).
 COPY pyproject.toml ./
 COPY app ./app
-RUN pip install .
+RUN pip install . \
+    && playwright install chromium --with-deps \
+    && chmod -R 755 /ms-playwright
 
 # Usuario nao-root.
 RUN useradd -m -u 1000 appuser

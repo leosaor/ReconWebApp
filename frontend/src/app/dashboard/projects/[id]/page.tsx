@@ -1,10 +1,17 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { AppHeader } from "@/components/AppHeader";
+import {
+  API_URL,
+  clearStoredToken,
+  CurrentUser,
+  fetchCurrentUser,
+  formatDate,
+  getStoredToken,
+} from "@/lib/auth";
 
 type Project = {
   id: string;
@@ -24,10 +31,12 @@ type Target = {
   created_at: string;
 };
 
+type ScanType = "subdomain_enum" | "http_probe" | "port_scan" | "header_check" | "clickjacking" | "domain_spoofing";
+
 type Scan = {
   id: string;
   target_id: string;
-  scan_type: "subdomain_enum" | "http_probe" | "port_scan";
+  scan_type: ScanType;
   status: "pending" | "running" | "completed" | "failed";
   error: string | null;
   started_at: string | null;
@@ -43,12 +52,23 @@ type ScanResult = {
   created_at: string;
 };
 
-type ScanType = Scan["scan_type"];
+type RunnableModule = "subdomain_enum" | "http_probe" | "header_check" | "clickjacking" | "domain_spoofing";
+
+const MODULE_OPTIONS: { type: RunnableModule; label: string; description: string }[] = [
+  { type: "subdomain_enum", label: "Subdomain Enum", description: "Enumera subdomínios via subfinder" },
+  { type: "http_probe", label: "HTTP Probe", description: "Sonda URLs ativas via httpx" },
+  { type: "header_check", label: "Cabeçalhos HTTP", description: "Analisa security headers via shcheck" },
+  { type: "clickjacking", label: "Clickjacking", description: "Verifica X-Frame-Options e CSP frame-ancestors" },
+  { type: "domain_spoofing", label: "Domain Spoofing", description: "Verifica registros SPF e DMARC via DNS" },
+];
 
 const scanLabels: Record<ScanType, string> = {
-  subdomain_enum: "Subdomains",
+  subdomain_enum: "Subdomain Enum",
   http_probe: "HTTP Probe",
   port_scan: "Port Scan",
+  header_check: "Cabeçalhos HTTP",
+  clickjacking: "Clickjacking",
+  domain_spoofing: "Domain Spoofing",
 };
 
 const statusLabels: Record<Scan["status"], string> = {
@@ -58,107 +78,142 @@ const statusLabels: Record<Scan["status"], string> = {
   failed: "Falhou",
 };
 
-function getStoredToken() {
-  if (typeof window === "undefined") {
+const statusColors: Record<Scan["status"], string> = {
+  pending: "text-yellow-300",
+  running: "text-cyan-300",
+  completed: "text-green-300",
+  failed: "text-red-300",
+};
+
+function isActiveStatus(status: Scan["status"]): boolean {
+  return status === "pending" || status === "running";
+}
+
+async function requestWithAuth(path: string, init: RequestInit = {}): Promise<Response | null> {
+  const token = getStoredToken();
+  if (!token) {
+    clearStoredToken();
+    window.location.href = "/";
     return null;
   }
 
-  return (
-    window.localStorage.getItem("access_token") ??
-    window.sessionStorage.getItem("access_token")
-  );
-}
+  const response = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(init.headers ?? {}),
+    },
+  });
 
-function clearStoredToken() {
-  window.localStorage.removeItem("access_token");
-  window.sessionStorage.removeItem("access_token");
-}
+  if (response.status === 401 || response.status === 403) {
+    clearStoredToken();
+    window.location.href = "/";
+    return null;
+  }
 
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(new Date(value));
+  return response;
 }
 
 export default function ProjectDetail() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
+
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [targets, setTargets] = useState<Target[]>([]);
   const [scansByTarget, setScansByTarget] = useState<Record<string, Scan[]>>({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [startingScan, setStartingScan] = useState<string | null>(null);
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<string | null>(null);
   const [deletingTarget, setDeletingTarget] = useState<string | null>(null);
   const [selectedScan, setSelectedScan] = useState<Scan | null>(null);
   const [scanResults, setScanResults] = useState<ScanResult[]>([]);
   const [loadingResults, setLoadingResults] = useState(false);
 
-  async function requestWithAuth(path: string, init: RequestInit = {}) {
-    const token = getStoredToken();
-    if (!token) {
-      window.location.href = "/";
-      return null;
-    }
+  const [executeModal, setExecuteModal] = useState<{ targetId: string; targetValue: string } | null>(null);
+  const [modalModules, setModalModules] = useState<Record<RunnableModule, boolean>>({
+    subdomain_enum: true,
+    http_probe: true,
+    header_check: false,
+    clickjacking: false,
+    domain_spoofing: false,
+  });
+  const [executingTarget, setExecutingTarget] = useState<string | null>(null);
+  const [executingPhase, setExecutingPhase] = useState<string | null>(null);
 
-    const response = await fetch(`${API_URL}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(init.headers ?? {}),
-      },
-    });
+  const scansByTargetRef = useRef(scansByTarget);
+  useEffect(() => {
+    scansByTargetRef.current = scansByTarget;
+  }, [scansByTarget]);
 
-    if (response.status === 401 || response.status === 403) {
-      clearStoredToken();
-      window.location.href = "/";
-      return null;
-    }
+  const selectedScanRef = useRef(selectedScan);
+  useEffect(() => {
+    selectedScanRef.current = selectedScan;
+  }, [selectedScan]);
 
-    return response;
-  }
+  useEffect(() => {
+    fetchCurrentUser().then(setCurrentUser).catch(() => {});
+    loadProject()
+      .catch(() => setError("Nao foi possivel carregar o projeto."))
+      .finally(() => setLoading(false));
+  }, [projectId]);
+
+  useEffect(() => {
+    const activeScans = Object.values(scansByTarget)
+      .flat()
+      .filter((s) => isActiveStatus(s.status));
+
+    if (activeScans.length === 0) return;
+
+    const intervalId = setInterval(() => {
+      const token = getStoredToken();
+      if (!token) return;
+
+      activeScans.forEach((scan) => {
+        fetch(`${API_URL}/api/v1/scans/${scan.id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+          .then((r) => (r.ok ? (r.json() as Promise<Scan>) : null))
+          .then((updated) => {
+            if (!updated) return;
+            setScansByTarget((current) => ({
+              ...current,
+              [updated.target_id]: (current[updated.target_id] ?? []).map((s) =>
+                s.id === updated.id ? updated : s,
+              ),
+            }));
+            if (selectedScanRef.current?.id === updated.id) {
+              setSelectedScan(updated);
+            }
+          })
+          .catch(() => {});
+      });
+    }, 5000);
+
+    return () => clearInterval(intervalId);
+  }, [scansByTarget]);
 
   async function loadProject() {
     const projectResponse = await requestWithAuth(`/api/v1/projects/${projectId}`);
-    if (!projectResponse) {
-      return;
-    }
+    if (!projectResponse) return;
 
     if (projectResponse.status === 404) {
       setError("Projeto nao encontrado.");
       return;
     }
 
-    if (!projectResponse.ok) {
-      throw new Error("project_failed");
-    }
+    if (!projectResponse.ok) throw new Error("project_failed");
 
-    const targetResponse = await requestWithAuth(
-      `/api/v1/projects/${projectId}/targets`,
-    );
-    if (!targetResponse) {
-      return;
-    }
-
-    if (!targetResponse.ok) {
-      throw new Error("targets_failed");
-    }
+    const targetResponse = await requestWithAuth(`/api/v1/projects/${projectId}/targets`);
+    if (!targetResponse || !targetResponse.ok) throw new Error("targets_failed");
 
     const projectData = (await projectResponse.json()) as Project;
     const targetData = (await targetResponse.json()) as Target[];
     const scanEntries = await Promise.all(
       targetData.map(async (target) => {
-        const scanResponse = await requestWithAuth(
-          `/api/v1/targets/${target.id}/scans`,
-        );
-
-        if (!scanResponse || !scanResponse.ok) {
-          return [target.id, []] as const;
-        }
-
+        const scanResponse = await requestWithAuth(`/api/v1/targets/${target.id}/scans`);
+        if (!scanResponse || !scanResponse.ok) return [target.id, []] as const;
         const scans = (await scanResponse.json()) as Scan[];
         return [target.id, scans] as const;
       }),
@@ -169,11 +224,87 @@ export default function ProjectDetail() {
     setScansByTarget(Object.fromEntries(scanEntries));
   }
 
-  useEffect(() => {
-    loadProject()
-      .catch(() => setError("Nao foi possivel carregar o projeto."))
-      .finally(() => setLoading(false));
-  }, [projectId]);
+  async function startOneScan(targetId: string, scanType: ScanType): Promise<Scan | null> {
+    const response = await requestWithAuth(`/api/v1/targets/${targetId}/scans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scan_type: scanType }),
+    });
+    if (!response || !response.ok) return null;
+    const created = (await response.json()) as Scan;
+    setScansByTarget((current) => ({
+      ...current,
+      [targetId]: [created, ...(current[targetId] ?? [])],
+    }));
+    return created;
+  }
+
+  function waitForScan(scanId: string, targetId: string): Promise<void> {
+    return new Promise((resolve) => {
+      const intervalId = setInterval(async () => {
+        const token = getStoredToken();
+        if (!token) {
+          clearInterval(intervalId);
+          resolve();
+          return;
+        }
+        try {
+          const r = await fetch(`${API_URL}/api/v1/scans/${scanId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!r.ok) {
+            clearInterval(intervalId);
+            resolve();
+            return;
+          }
+          const updated = (await r.json()) as Scan;
+          setScansByTarget((current) => ({
+            ...current,
+            [targetId]: (current[targetId] ?? []).map((s) =>
+              s.id === scanId ? updated : s,
+            ),
+          }));
+          if (!isActiveStatus(updated.status)) {
+            clearInterval(intervalId);
+            resolve();
+          }
+        } catch {
+          clearInterval(intervalId);
+          resolve();
+        }
+      }, 3000);
+    });
+  }
+
+  function openExecuteModal(target: Target) {
+    setExecuteModal({ targetId: target.id, targetValue: target.value });
+    setModalModules({ subdomain_enum: true, http_probe: true, header_check: false, clickjacking: false, domain_spoofing: false });
+  }
+
+  async function handleExecuteConfirm() {
+    if (!executeModal) return;
+    const { targetId } = executeModal;
+
+    const phases = MODULE_OPTIONS.filter((m) => modalModules[m.type]);
+    if (phases.length === 0) return;
+
+    setExecuteModal(null);
+    setError("");
+    setExecutingTarget(targetId);
+
+    try {
+      for (const phase of phases) {
+        setExecutingPhase(phase.label);
+        const scan = await startOneScan(targetId, phase.type);
+        if (scan) await waitForScan(scan.id, targetId);
+      }
+    } catch {
+      setError("Erro durante a execucao dos modulos.");
+    } finally {
+      setExecutingTarget(null);
+      setExecutingPhase(null);
+    }
+  }
 
   async function handleCreateTarget(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -192,27 +323,20 @@ export default function ProjectDetail() {
     }
 
     try {
-      const response = await requestWithAuth(
-        `/api/v1/projects/${projectId}/targets`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ value, kind }),
-        },
-      );
+      const response = await requestWithAuth(`/api/v1/projects/${projectId}/targets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value, kind }),
+      });
 
-      if (!response) {
-        return;
-      }
+      if (!response) return;
 
       if (response.status === 409) {
         setError("Esse target ja existe no projeto.");
         return;
       }
 
-      if (!response.ok) {
-        throw new Error("create_target_failed");
-      }
+      if (!response.ok) throw new Error("create_target_failed");
 
       const created = (await response.json()) as Target;
       setTargets((current) => [created, ...current]);
@@ -225,44 +349,9 @@ export default function ProjectDetail() {
     }
   }
 
-  async function handleStartScan(targetId: string, scanType: ScanType) {
-    setError("");
-    setStartingScan(`${targetId}:${scanType}`);
-
-    try {
-      const response = await requestWithAuth(`/api/v1/targets/${targetId}/scans`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scan_type: scanType }),
-      });
-
-      if (!response) {
-        return;
-      }
-
-      if (response.status === 422) {
-        setError("Target fora de escopo.");
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error("start_scan_failed");
-      }
-
-      const created = (await response.json()) as Scan;
-      setScansByTarget((current) => ({
-        ...current,
-        [targetId]: [created, ...(current[targetId] ?? [])],
-      }));
-    } catch {
-      setError("Nao foi possivel iniciar o scan.");
-    } finally {
-      setStartingScan(null);
-    }
-  }
-
   async function handleDeleteTarget(targetId: string) {
     setError("");
+    setConfirmDeleteTarget(null);
     setDeletingTarget(targetId);
 
     try {
@@ -271,15 +360,10 @@ export default function ProjectDetail() {
         { method: "DELETE" },
       );
 
-      if (!response) {
-        return;
-      }
+      if (!response) return;
+      if (!response.ok) throw new Error("delete_target_failed");
 
-      if (!response.ok) {
-        throw new Error("delete_target_failed");
-      }
-
-      setTargets((current) => current.filter((target) => target.id !== targetId));
+      setTargets((current) => current.filter((t) => t.id !== targetId));
       setScansByTarget((current) => {
         const next = { ...current };
         delete next[targetId];
@@ -303,15 +387,8 @@ export default function ProjectDetail() {
 
     try {
       const response = await requestWithAuth(`/api/v1/scans/${scan.id}/results`);
-
-      if (!response) {
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error("results_failed");
-      }
-
+      if (!response) return;
+      if (!response.ok) throw new Error("results_failed");
       const results = (await response.json()) as ScanResult[];
       setScanResults(results);
     } catch {
@@ -319,11 +396,6 @@ export default function ProjectDetail() {
     } finally {
       setLoadingResults(false);
     }
-  }
-
-  function handleLogout() {
-    clearStoredToken();
-    window.location.href = "/";
   }
 
   function renderResultData(result: ScanResult, scanType: ScanType) {
@@ -341,9 +413,76 @@ export default function ProjectDetail() {
           </p>
           {Array.isArray(result.data?.technologies) ? (
             <p className="text-xs text-slate-400">
-              Tecnologias: {result.data.technologies.join(", ") || "-"}
+              Tecnologias: {(result.data.technologies as string[]).join(", ") || "-"}
             </p>
           ) : null}
+        </div>
+      );
+    }
+
+    if (scanType === "header_check") {
+      const svgB64 = result.data?.svg_b64 as string | undefined;
+      return (
+        <div className="grid gap-2">
+          <p className="break-all text-sm font-medium text-white">{result.value}</p>
+          {svgB64 ? (
+            <img
+              src={`data:image/svg+xml;base64,${svgB64}`}
+              alt="shcheck output"
+              className="w-full rounded border border-white/10"
+            />
+          ) : (
+            <p className="text-xs text-slate-400">Sem resultado</p>
+          )}
+        </div>
+      );
+    }
+
+    if (scanType === "clickjacking") {
+      const vulnerable = result.data?.vulnerable as boolean | undefined;
+      const screenshotB64 = result.data?.screenshot_b64 as string | undefined;
+      return (
+        <div className="grid gap-2">
+          <div className="flex items-center gap-2">
+            <p className="break-all text-sm font-medium text-white">{result.value}</p>
+            <span className={`text-xs font-semibold uppercase ${vulnerable ? "text-red-300" : "text-green-300"}`}>
+              {vulnerable ? "Vulneravel" : "Protegido"}
+            </span>
+          </div>
+          {screenshotB64 ? (
+            <img
+              src={`data:image/png;base64,${screenshotB64}`}
+              alt="clickjacking screenshot"
+              className="w-full rounded border border-white/10"
+            />
+          ) : (
+            <div className="space-y-1">
+              <p className="text-xs text-slate-400">
+                X-Frame-Options: {String(result.data?.x_frame_options ?? "ausente")}
+              </p>
+              <p className="text-xs text-slate-400">
+                CSP frame-ancestors: {String(result.data?.csp_frame_ancestors ?? "ausente")}
+              </p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (scanType === "domain_spoofing") {
+      const svgB64 = result.data?.svg_b64 as string | undefined;
+      return (
+        <div className="grid gap-2">
+          <p className="text-sm font-medium text-white">{result.value}</p>
+          {svgB64 ? (
+            <img
+              src={`data:image/svg+xml;base64,${svgB64}`}
+              alt={`${String(result.value)} DNS check`}
+              className="w-full rounded border border-white/10"
+            />
+          ) : (
+            <p className="text-xs text-slate-400">Sem resultado</p>
+          )}
         </div>
       );
     }
@@ -357,36 +496,72 @@ export default function ProjectDetail() {
           {String(result.data?.state ?? "-")}
         </p>
         {result.data?.version ? (
-          <p className="text-xs text-slate-400">
-            Versao: {String(result.data.version)}
-          </p>
+          <p className="text-xs text-slate-400">Versao: {String(result.data.version)}</p>
         ) : null}
       </div>
     );
   }
 
+  const anyModuleSelected = Object.values(modalModules).some(Boolean);
+
   return (
     <main className="min-h-screen bg-[#06111f] text-slate-100">
-      <header className="border-b border-white/10 bg-[#071827] px-6 py-4">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
-          <Link href="/dashboard">
-            <img
-              alt="Clavis"
-              className="h-auto w-32"
-              height="105"
-              src="/clavis-logo.svg"
-              width="301"
-            />
-          </Link>
-          <button
-            className="h-10 border border-white/15 px-4 text-sm font-medium text-slate-200 transition hover:border-cyan-300 hover:text-cyan-200"
-            onClick={handleLogout}
-            type="button"
-          >
-            Sair
-          </button>
+      <AppHeader user={currentUser} />
+
+      {/* Modal de seleção de módulos */}
+      {executeModal ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setExecuteModal(null);
+          }}
+        >
+          <div className="w-full max-w-sm border border-white/10 bg-[#0a1f35] p-6 shadow-2xl">
+            <h2 className="text-lg font-semibold text-white">Selecionar módulos</h2>
+            <p className="mt-1 truncate text-sm text-slate-400">{executeModal.targetValue}</p>
+
+            <div className="mt-5 grid gap-3">
+              {MODULE_OPTIONS.map((module) => (
+                <label
+                  className="flex cursor-pointer items-start gap-3 rounded border border-white/10 p-3 transition hover:border-white/20"
+                  key={module.type}
+                >
+                  <input
+                    checked={modalModules[module.type]}
+                    className="mt-0.5 h-4 w-4 accent-cyan-300"
+                    onChange={(e) =>
+                      setModalModules((prev) => ({ ...prev, [module.type]: e.target.checked }))
+                    }
+                    type="checkbox"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-slate-100">{module.label}</p>
+                    <p className="text-xs text-slate-400">{module.description}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                className="h-10 flex-1 border border-cyan-300 bg-cyan-300 px-4 text-sm font-semibold text-[#06111f] disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!anyModuleSelected}
+                onClick={handleExecuteConfirm}
+                type="button"
+              >
+                Executar
+              </button>
+              <button
+                className="h-10 border border-white/15 px-4 text-sm font-semibold text-slate-300 transition hover:border-white/30 hover:text-slate-100"
+                onClick={() => setExecuteModal(null)}
+                type="button"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
-      </header>
+      ) : null}
 
       <section className="mx-auto grid max-w-6xl gap-6 px-6 py-8">
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
@@ -409,7 +584,7 @@ export default function ProjectDetail() {
             <div className="px-5 py-3">
               <p className="text-xs uppercase text-slate-400">In scope</p>
               <p className="mt-1 text-2xl font-semibold text-white">
-                {targets.filter((target) => target.in_scope).length}
+                {targets.filter((t) => t.in_scope).length}
               </p>
             </div>
           </div>
@@ -420,9 +595,7 @@ export default function ProjectDetail() {
             className="grid content-start gap-4 border border-white/10 bg-[#0a1f35] p-5"
             onSubmit={handleCreateTarget}
           >
-            <div>
-              <h2 className="text-lg font-semibold text-white">Novo target</h2>
-            </div>
+            <h2 className="text-lg font-semibold text-white">Novo target</h2>
 
             <label className="grid gap-2 text-sm">
               <span className="font-medium text-slate-200">Target</span>
@@ -475,10 +648,7 @@ export default function ProjectDetail() {
             ) : (
               <div className="divide-y divide-white/10">
                 {targets.map((target) => (
-                  <article
-                    className="grid gap-4 px-5 py-4"
-                    key={target.id}
-                  >
+                  <article className="grid gap-4 px-5 py-4" key={target.id}>
                     <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
@@ -492,6 +662,12 @@ export default function ProjectDetail() {
                             {target.in_scope ? "In scope" : "Out of scope"}
                           </span>
                         </div>
+                        {executingTarget === target.id && executingPhase ? (
+                          <p className="mt-1 text-xs text-cyan-300">
+                            {executingPhase}
+                            <span className="ml-1 animate-pulse">•</span>
+                          </p>
+                        ) : null}
                       </div>
                       <div className="flex items-center gap-3 md:justify-end">
                         <div className="text-left text-xs uppercase text-slate-500 md:text-right">
@@ -500,39 +676,51 @@ export default function ProjectDetail() {
                             {formatDate(target.created_at)}
                           </p>
                         </div>
-                        <button
-                          className="h-9 border border-red-300/30 px-3 text-xs font-semibold uppercase text-red-200 transition hover:border-red-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={deletingTarget === target.id}
-                          onClick={() => handleDeleteTarget(target.id)}
-                          type="button"
-                        >
-                          {deletingTarget === target.id ? "Removendo..." : "Remover"}
-                        </button>
-                      </div>
-                    </div>
 
-                    <div className="flex flex-wrap gap-2">
-                      {(Object.keys(scanLabels) as ScanType[]).map((scanType) => (
                         <button
                           className="h-9 border border-cyan-300/40 px-3 text-xs font-semibold uppercase text-cyan-100 transition hover:border-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={
-                            !target.in_scope ||
-                            startingScan === `${target.id}:${scanType}`
-                          }
-                          key={scanType}
-                          onClick={() => handleStartScan(target.id, scanType)}
+                          disabled={!target.in_scope || executingTarget === target.id}
+                          onClick={() => openExecuteModal(target)}
+                          title={!target.in_scope ? "Target fora de escopo" : "Selecionar módulos e executar"}
                           type="button"
                         >
-                          {startingScan === `${target.id}:${scanType}`
-                            ? "Iniciando..."
-                            : scanLabels[scanType]}
+                          {executingTarget === target.id ? "Rodando..." : "Executar"}
                         </button>
-                      ))}
+
+                        {confirmDeleteTarget === target.id ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              className="h-9 border border-red-300 px-3 text-xs font-semibold uppercase text-red-200 transition hover:bg-red-300/10 disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={deletingTarget === target.id}
+                              onClick={() => handleDeleteTarget(target.id)}
+                              type="button"
+                            >
+                              {deletingTarget === target.id ? "Removendo..." : "Confirmar"}
+                            </button>
+                            <button
+                              className="h-9 border border-white/15 px-3 text-xs font-semibold uppercase text-slate-400 transition hover:border-white/30 hover:text-slate-200"
+                              onClick={() => setConfirmDeleteTarget(null)}
+                              type="button"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            className="h-9 border border-red-300/30 px-3 text-xs font-semibold uppercase text-red-200 transition hover:border-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={deletingTarget === target.id}
+                            onClick={() => setConfirmDeleteTarget(target.id)}
+                            type="button"
+                          >
+                            Remover
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {(scansByTarget[target.id] ?? []).length > 0 ? (
                       <div className="border border-white/10">
-                        {(scansByTarget[target.id] ?? []).slice(0, 3).map((scan) => (
+                        {(scansByTarget[target.id] ?? []).slice(0, 5).map((scan) => (
                           <div
                             className="grid gap-2 border-b border-white/10 px-3 py-2 last:border-b-0 md:grid-cols-[1fr_auto] md:items-center"
                             key={scan.id}
@@ -547,11 +735,14 @@ export default function ProjectDetail() {
                                 </p>
                               ) : null}
                             </div>
-                            <div className="flex items-center gap-3 text-xs uppercase text-slate-400 md:justify-end">
-                              <span className="text-slate-300">
+                            <div className="flex items-center gap-3 text-xs uppercase md:justify-end">
+                              <span className={`font-medium ${statusColors[scan.status]}`}>
                                 {statusLabels[scan.status]}
+                                {isActiveStatus(scan.status) ? (
+                                  <span className="ml-1 animate-pulse">•</span>
+                                ) : null}
                               </span>
-                              <span>{formatDate(scan.created_at)}</span>
+                              <span className="text-slate-400">{formatDate(scan.created_at)}</span>
                               <button
                                 className="font-semibold text-cyan-200 transition hover:text-cyan-100"
                                 onClick={() => handleLoadResults(scan)}
@@ -575,30 +766,35 @@ export default function ProjectDetail() {
           <section className="border border-white/10 bg-[#0a1f35]">
             <div className="grid gap-2 border-b border-white/10 px-5 py-4 md:grid-cols-[1fr_auto] md:items-center">
               <div>
-                <p className="text-xs font-semibold uppercase text-cyan-200">
-                  Resultados
-                </p>
+                <p className="text-xs font-semibold uppercase text-cyan-200">Resultados</p>
                 <h2 className="mt-1 text-lg font-semibold text-white">
-                  {scanLabels[selectedScan.scan_type]} -{" "}
-                  {statusLabels[selectedScan.status]}
+                  {scanLabels[selectedScan.scan_type]} —{" "}
+                  <span className={statusColors[selectedScan.status]}>
+                    {statusLabels[selectedScan.status]}
+                  </span>
                 </h2>
               </div>
-              <button
-                className="h-9 border border-white/15 px-3 text-xs font-semibold uppercase text-slate-200 transition hover:border-cyan-300 hover:text-cyan-200"
-                onClick={() => handleLoadResults(selectedScan)}
-                type="button"
-              >
-                Atualizar
-              </button>
+              <div className="flex items-center gap-2">
+                {isActiveStatus(selectedScan.status) ? (
+                  <span className="text-xs text-slate-500">Atualizando automaticamente...</span>
+                ) : null}
+                <button
+                  className="h-9 border border-white/15 px-3 text-xs font-semibold uppercase text-slate-200 transition hover:border-cyan-300 hover:text-cyan-200"
+                  onClick={() => handleLoadResults(selectedScan)}
+                  type="button"
+                >
+                  Atualizar
+                </button>
+              </div>
             </div>
 
             {loadingResults ? (
-              <div className="px-5 py-8 text-sm text-slate-400">
-                Carregando resultados...
-              </div>
+              <div className="px-5 py-8 text-sm text-slate-400">Carregando resultados...</div>
             ) : scanResults.length === 0 ? (
               <div className="px-5 py-8 text-sm text-slate-400">
-                Nenhum resultado encontrado para este scan.
+                {isActiveStatus(selectedScan.status)
+                  ? "Scan em andamento, nenhum resultado ainda."
+                  : "Nenhum resultado encontrado para este scan."}
               </div>
             ) : (
               <div className="divide-y divide-white/10">
