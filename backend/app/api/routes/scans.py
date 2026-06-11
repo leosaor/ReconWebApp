@@ -1,11 +1,14 @@
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_db, require_writer
+from app.models.scan import ScanType
 from app.models.user import User
 from app.schemas.scan import ScanCreate, ScanResponse, ScanResultResponse
+from app.services.artifacts import content_fuzz_path, nuclei_scan_path
 from app.services import recon_service
 
 router = APIRouter(prefix="/api/v1", tags=["scans"])
@@ -49,3 +52,37 @@ def list_scan_results(
 ):
     scan = recon_service.get_scan_or_404(db, scan_id, current_user)
     return scan.results
+
+
+@router.get("/scans/{scan_id}/artifact")
+def download_scan_artifact(
+    scan_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    scan = recon_service.get_scan_or_404(db, scan_id, current_user)
+    artifacts = {
+        ScanType.CONTENT_FUZZ: (
+            content_fuzz_path(scan.target),
+            "text/plain; charset=utf-8",
+            f"feroxbuster-{scan.id}.txt",
+        ),
+        ScanType.NUCLEI_SCAN: (
+            nuclei_scan_path(scan.target),
+            "text/plain; charset=utf-8",
+            f"nuclei-{scan.id}.txt",
+        ),
+    }
+    artifact = artifacts.get(scan.scan_type)
+    if artifact is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact not found")
+
+    path, media_type, filename = artifact
+    if not path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact not found")
+
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=filename,
+    )

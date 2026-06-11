@@ -16,6 +16,7 @@ import {
 type Project = {
   id: string;
   owner_id: string;
+  owner_name: string;
   name: string;
   description: string | null;
   created_at: string;
@@ -26,12 +27,10 @@ type Target = {
   id: string;
   project_id: string;
   value: string;
-  kind: string;
-  in_scope: boolean;
   created_at: string;
 };
 
-type ScanType = "subdomain_enum" | "http_probe" | "port_scan" | "header_check" | "clickjacking" | "domain_spoofing";
+type ScanType = "subdomain_enum" | "http_probe" | "port_scan" | "header_check" | "clickjacking" | "domain_spoofing" | "tls_scan" | "content_fuzz" | "git_dump" | "nuclei_scan";
 
 type Scan = {
   id: string;
@@ -52,15 +51,35 @@ type ScanResult = {
   created_at: string;
 };
 
-type RunnableModule = "subdomain_enum" | "http_probe" | "header_check" | "clickjacking" | "domain_spoofing";
+type RunnableModule = "subdomain_enum" | "http_probe" | "port_scan" | "header_check" | "clickjacking" | "domain_spoofing" | "tls_scan" | "content_fuzz" | "git_dump" | "nuclei_scan";
 
 const MODULE_OPTIONS: { type: RunnableModule; label: string; description: string }[] = [
   { type: "subdomain_enum", label: "Subdomain Enum", description: "Enumera subdomínios via subfinder" },
-  { type: "http_probe", label: "HTTP Probe", description: "Sonda URLs ativas via httpx" },
-  { type: "header_check", label: "Cabeçalhos HTTP", description: "Analisa security headers via shcheck" },
-  { type: "clickjacking", label: "Clickjacking", description: "Verifica X-Frame-Options e CSP frame-ancestors" },
-  { type: "domain_spoofing", label: "Domain Spoofing", description: "Verifica registros SPF e DMARC via DNS" },
+  { type: "http_probe", label: "HTTP Probe", description: "Httpx nos subdominios" },
+  { type: "content_fuzz", label: "Fuzzing", description: "Feroxbuster com Wordlist common" },
+  { type: "nuclei_scan", label: "Nuclei", description: "Roda Nuclei no target original" },
+  { type: "port_scan", label: "Port Scan", description: "Nmap nos hosts que respondem 200 no httpx" },
+  { type: "git_dump", label: "Git Dumper", description: "Testa exposicao de .git em URLs HTTP 200" },
+  { type: "header_check", label: "Cabeçalhos HTTP", description: "shcheck" },
+  { type: "clickjacking", label: "Clickjacking", description: "Teste de ClickJacking" },
+  { type: "tls_scan", label: "TLS/Cifras", description: "sslscan para testes de TLS e cifras" },
+  { type: "domain_spoofing", label: "Domain Spoofing", description: "SPF e DMARC via DNS" },
 ];
+
+function createEmptyModuleSelection(): Record<RunnableModule, boolean> {
+  return {
+    subdomain_enum: false,
+    http_probe: false,
+    content_fuzz: false,
+    nuclei_scan: false,
+    port_scan: false,
+    git_dump: false,
+    header_check: false,
+    clickjacking: false,
+    tls_scan: false,
+    domain_spoofing: false,
+  };
+}
 
 const scanLabels: Record<ScanType, string> = {
   subdomain_enum: "Subdomain Enum",
@@ -69,6 +88,10 @@ const scanLabels: Record<ScanType, string> = {
   header_check: "Cabeçalhos HTTP",
   clickjacking: "Clickjacking",
   domain_spoofing: "Domain Spoofing",
+  tls_scan: "TLS/Cifras",
+  content_fuzz: "Fuzzing",
+  git_dump: "Git Dumper",
+  nuclei_scan: "Nuclei",
 };
 
 const statusLabels: Record<Scan["status"], string> = {
@@ -85,8 +108,24 @@ const statusColors: Record<Scan["status"], string> = {
   failed: "text-red-300",
 };
 
+const FUZZING_HIDDEN_EXTENSIONS = new Set(["css", "gif", "jpeg", "jpg", "png", "svf", "svg"]);
+
 function isActiveStatus(status: Scan["status"]): boolean {
   return status === "pending" || status === "running";
+}
+
+function shouldShowFuzzingResult(result: ScanResult): boolean {
+  const rawUrl = String(result.data?.url ?? result.value ?? "");
+  const path = (() => {
+    try {
+      return new URL(rawUrl).pathname;
+    } catch {
+      return rawUrl.split("?")[0].split("#")[0];
+    }
+  })();
+  const fileName = path.split("/").pop() ?? "";
+  const extension = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() : "";
+  return !extension || !FUZZING_HIDDEN_EXTENSIONS.has(extension);
 }
 
 async function requestWithAuth(path: string, init: RequestInit = {}): Promise<Response | null> {
@@ -130,15 +169,12 @@ export default function ProjectDetail() {
   const [selectedScan, setSelectedScan] = useState<Scan | null>(null);
   const [scanResults, setScanResults] = useState<ScanResult[]>([]);
   const [loadingResults, setLoadingResults] = useState(false);
+  const [downloadingArtifact, setDownloadingArtifact] = useState(false);
 
   const [executeModal, setExecuteModal] = useState<{ targetId: string; targetValue: string } | null>(null);
-  const [modalModules, setModalModules] = useState<Record<RunnableModule, boolean>>({
-    subdomain_enum: true,
-    http_probe: true,
-    header_check: false,
-    clickjacking: false,
-    domain_spoofing: false,
-  });
+  const [modalModules, setModalModules] = useState<Record<RunnableModule, boolean>>(
+    createEmptyModuleSelection,
+  );
   const [executingTarget, setExecutingTarget] = useState<string | null>(null);
   const [executingPhase, setExecutingPhase] = useState<string | null>(null);
 
@@ -278,7 +314,7 @@ export default function ProjectDetail() {
 
   function openExecuteModal(target: Target) {
     setExecuteModal({ targetId: target.id, targetValue: target.value });
-    setModalModules({ subdomain_enum: true, http_probe: true, header_check: false, clickjacking: false, domain_spoofing: false });
+    setModalModules(createEmptyModuleSelection());
   }
 
   async function handleExecuteConfirm() {
@@ -299,7 +335,7 @@ export default function ProjectDetail() {
         if (scan) await waitForScan(scan.id, targetId);
       }
     } catch {
-      setError("Erro durante a execucao dos modulos.");
+      setError("Erro durante a execução dos módulos.");
     } finally {
       setExecutingTarget(null);
       setExecutingPhase(null);
@@ -314,7 +350,6 @@ export default function ProjectDetail() {
     const form = event.currentTarget;
     const formData = new FormData(form);
     const value = String(formData.get("value") ?? "").trim();
-    const kind = String(formData.get("kind") ?? "domain");
 
     if (!value) {
       setError("Informe o target.");
@@ -326,7 +361,7 @@ export default function ProjectDetail() {
       const response = await requestWithAuth(`/api/v1/projects/${projectId}/targets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value, kind }),
+        body: JSON.stringify({ value, kind: "domain" }),
       });
 
       if (!response) return;
@@ -398,12 +433,51 @@ export default function ProjectDetail() {
     }
   }
 
+  async function handleDownloadArtifact(scan: Scan) {
+    setError("");
+    setDownloadingArtifact(true);
+
+    try {
+      const response = await requestWithAuth(`/api/v1/scans/${scan.id}/artifact`);
+      if (!response) return;
+      if (!response.ok) throw new Error("artifact_failed");
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = scan.scan_type === "nuclei_scan"
+        ? `nuclei-${scan.id}.txt`
+        : `feroxbuster-${scan.id}.txt`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError("Nao foi possivel baixar o arquivo do scan.");
+    } finally {
+      setDownloadingArtifact(false);
+    }
+  }
+
   function renderResultData(result: ScanResult, scanType: ScanType) {
     if (scanType === "subdomain_enum") {
       return <p className="text-sm font-medium text-white">{result.value}</p>;
     }
 
     if (scanType === "http_probe") {
+      const location = result.data?.location as string | undefined;
+      const hostIp = result.data?.host_ip as string | undefined;
+      const dnsIps = Array.isArray(result.data?.a) ? (result.data.a as string[]) : [];
+      const ips = hostIp ? [hostIp] : dnsIps;
+      const cdnName = result.data?.cdn_name as string | undefined;
+      const cdnType = result.data?.cdn_type as string | undefined;
+      const hasCdn = Boolean(result.data?.cdn || cdnName || cdnType);
+      const technologies = Array.isArray(result.data?.technologies)
+        ? (result.data.technologies as string[])
+        : Array.isArray(result.data?.tech)
+          ? (result.data.tech as string[])
+          : [];
       return (
         <div className="grid gap-1">
           <p className="break-all text-sm font-medium text-white">{result.value}</p>
@@ -411,9 +485,20 @@ export default function ProjectDetail() {
             Status: {String(result.data?.status_code ?? "-")} | Titulo:{" "}
             {String(result.data?.title ?? "-")}
           </p>
-          {Array.isArray(result.data?.technologies) ? (
+          {location ? (
+            <p className="break-all text-xs text-slate-400">Redirect: {location}</p>
+          ) : null}
+          {ips.length > 0 ? (
+            <p className="break-all text-xs text-slate-400">IP: {ips.join(", ")}</p>
+          ) : null}
+          {hasCdn ? (
             <p className="text-xs text-slate-400">
-              Tecnologias: {(result.data.technologies as string[]).join(", ") || "-"}
+              CDN: {[cdnName, cdnType].filter(Boolean).join(" / ") || "detectado"}
+            </p>
+          ) : null}
+          {technologies.length > 0 ? (
+            <p className="text-xs text-slate-400">
+              Tecnologias: {technologies.join(", ")}
             </p>
           ) : null}
         </div>
@@ -469,6 +554,119 @@ export default function ProjectDetail() {
       );
     }
 
+    if (scanType === "tls_scan") {
+      const svgB64 = result.data?.svg_b64 as string | undefined;
+      const outputFile = result.data?.output_file as string | undefined;
+      const returnCode = result.data?.return_code;
+      return (
+        <div className="grid gap-2">
+          <div>
+            <p className="break-all text-sm font-medium text-white">{result.value}</p>
+            <p className="text-xs text-slate-400">
+              Exit code: {String(returnCode ?? "-")}
+              {outputFile ? ` | Arquivo: ${outputFile}` : ""}
+            </p>
+          </div>
+          {svgB64 ? (
+            <img
+              src={`data:image/svg+xml;base64,${svgB64}`}
+              alt="sslscan output"
+              className="w-full rounded border border-white/10"
+            />
+          ) : (
+            <p className="text-xs text-slate-400">Sem resultado</p>
+          )}
+        </div>
+      );
+    }
+
+    if (scanType === "content_fuzz") {
+      const statusCode = result.data?.status_code;
+      const contentLength = result.data?.content_length;
+      const words = result.data?.words;
+      const lines = result.data?.lines;
+      const redirect = result.data?.redirect as string | undefined;
+      return (
+        <div className="grid gap-1">
+          <p className="break-all text-sm font-medium text-white">{result.value}</p>
+          <p className="text-xs text-slate-400">
+            Status: {String(statusCode ?? "-")} | Tamanho: {String(contentLength ?? "-")} | Palavras:{" "}
+            {String(words ?? "-")} | Linhas: {String(lines ?? "-")}
+          </p>
+          {redirect ? (
+            <p className="break-all text-xs text-slate-400">Redirect: {redirect}</p>
+          ) : null}
+        </div>
+      );
+    }
+
+    if (scanType === "git_dump") {
+      const vulnerable = Boolean(result.data?.vulnerable);
+      const gitUrl = result.data?.git_url as string | undefined;
+      const dumpDir = result.data?.dump_dir as string | undefined;
+      const returnCode = result.data?.return_code;
+      return (
+        <div className="grid gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="break-all text-sm font-medium text-white">{result.value}</p>
+            <span className={`text-xs font-semibold uppercase ${vulnerable ? "text-red-300" : "text-green-300"}`}>
+              {vulnerable ? "Vulneravel" : "Nao vulneravel"}
+            </span>
+          </div>
+          <p className="break-all text-xs text-slate-400">Testado: {gitUrl ?? `${result.value}/.git`}</p>
+          <p className="text-xs text-slate-400">Exit code: {String(returnCode ?? "-")}</p>
+          {dumpDir ? (
+            <p className="break-all text-xs text-slate-400">Dump: {dumpDir}</p>
+          ) : null}
+        </div>
+      );
+    }
+
+    if (scanType === "nuclei_scan") {
+      const severity = String(result.data?.severity ?? "-").toLowerCase();
+      const severityClass = severity === "critical"
+        ? "text-red-300"
+        : severity === "high"
+          ? "text-orange-300"
+          : severity === "medium"
+            ? "text-yellow-300"
+            : "text-cyan-300";
+      const tags = Array.isArray(result.data?.tags)
+        ? (result.data.tags as string[])
+        : typeof result.data?.tags === "string"
+          ? String(result.data.tags).split(",").map((tag) => tag.trim()).filter(Boolean)
+          : [];
+      const extracted = Array.isArray(result.data?.extracted_results)
+        ? (result.data.extracted_results as unknown[]).map(String)
+        : [];
+      return (
+        <div className="grid gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="break-all text-sm font-medium text-white">
+              {String(result.data?.template_id ?? result.data?.name ?? result.value)}
+            </p>
+            <span className={`text-xs font-semibold uppercase ${severityClass}`}>
+              {severity}
+            </span>
+          </div>
+          <p className="break-all text-xs text-slate-400">URL: {String(result.data?.matched_at ?? result.value)}</p>
+          <p className="break-all text-xs text-slate-400">Raw: {String(result.data?.raw ?? "-")}</p>
+          {result.data?.matcher_name ? (
+            <p className="text-xs text-slate-400">Matcher: {String(result.data.matcher_name)}</p>
+          ) : null}
+          {result.data?.description ? (
+            <p className="text-xs text-slate-400">{String(result.data.description)}</p>
+          ) : null}
+          {tags.length > 0 ? (
+            <p className="break-all text-xs text-slate-400">Tags: {tags.join(", ")}</p>
+          ) : null}
+          {extracted.length > 0 ? (
+            <p className="break-all text-xs text-slate-400">Extraido: {extracted.join(", ")}</p>
+          ) : null}
+        </div>
+      );
+    }
+
     if (scanType === "domain_spoofing") {
       const svgB64 = result.data?.svg_b64 as string | undefined;
       return (
@@ -503,6 +701,9 @@ export default function ProjectDetail() {
   }
 
   const anyModuleSelected = Object.values(modalModules).some(Boolean);
+  const visibleScanResults = selectedScan?.scan_type === "content_fuzz"
+    ? scanResults.filter(shouldShowFuzzingResult)
+    : scanResults;
 
   return (
     <main className="min-h-screen bg-[#06111f] text-slate-100">
@@ -576,17 +777,9 @@ export default function ProjectDetail() {
               {project?.description || "Gerencie targets e scans deste projeto."}
             </p>
           </div>
-          <div className="grid grid-cols-2 border border-white/10 bg-[#0a1f35]">
-            <div className="border-r border-white/10 px-5 py-3">
-              <p className="text-xs uppercase text-slate-400">Targets</p>
-              <p className="mt-1 text-2xl font-semibold text-white">{targets.length}</p>
-            </div>
-            <div className="px-5 py-3">
-              <p className="text-xs uppercase text-slate-400">In scope</p>
-              <p className="mt-1 text-2xl font-semibold text-white">
-                {targets.filter((t) => t.in_scope).length}
-              </p>
-            </div>
+          <div className="border border-white/10 bg-[#0a1f35] px-5 py-3">
+            <p className="text-xs uppercase text-slate-400">Targets</p>
+            <p className="mt-1 text-2xl font-semibold text-white">{targets.length}</p>
           </div>
         </div>
 
@@ -602,21 +795,9 @@ export default function ProjectDetail() {
               <input
                 className="h-11 border border-white/10 bg-[#06111f] px-3 text-slate-100 outline-none transition focus:border-cyan-300"
                 name="value"
-                placeholder="clavis.com.br"
+                placeholder="Domain or IP"
                 type="text"
               />
-            </label>
-
-            <label className="grid gap-2 text-sm">
-              <span className="font-medium text-slate-200">Tipo</span>
-              <select
-                className="h-11 border border-white/10 bg-[#06111f] px-3 text-slate-100 outline-none transition focus:border-cyan-300"
-                defaultValue="domain"
-                name="kind"
-              >
-                <option value="domain">Dominio</option>
-                <option value="ip">IP</option>
-              </select>
             </label>
 
             {error ? (
@@ -655,12 +836,6 @@ export default function ProjectDetail() {
                           <h3 className="truncate text-base font-semibold text-white">
                             {target.value}
                           </h3>
-                          <span className="border border-cyan-300/30 px-2 py-1 text-xs uppercase text-cyan-200">
-                            {target.kind}
-                          </span>
-                          <span className="border border-white/10 px-2 py-1 text-xs uppercase text-slate-300">
-                            {target.in_scope ? "In scope" : "Out of scope"}
-                          </span>
                         </div>
                         {executingTarget === target.id && executingPhase ? (
                           <p className="mt-1 text-xs text-cyan-300">
@@ -679,9 +854,9 @@ export default function ProjectDetail() {
 
                         <button
                           className="h-9 border border-cyan-300/40 px-3 text-xs font-semibold uppercase text-cyan-100 transition hover:border-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={!target.in_scope || executingTarget === target.id}
+                          disabled={executingTarget === target.id}
                           onClick={() => openExecuteModal(target)}
-                          title={!target.in_scope ? "Target fora de escopo" : "Selecionar módulos e executar"}
+                          title="Selecionar modulos e executar"
                           type="button"
                         >
                           {executingTarget === target.id ? "Rodando..." : "Executar"}
@@ -778,6 +953,20 @@ export default function ProjectDetail() {
                 {isActiveStatus(selectedScan.status) ? (
                   <span className="text-xs text-slate-500">Atualizando automaticamente...</span>
                 ) : null}
+                {selectedScan.scan_type === "content_fuzz" || selectedScan.scan_type === "nuclei_scan" ? (
+                  <button
+                    className="h-9 border border-cyan-300/40 px-3 text-xs font-semibold uppercase text-cyan-100 transition hover:border-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={downloadingArtifact || selectedScan.status !== "completed"}
+                    onClick={() => handleDownloadArtifact(selectedScan)}
+                    type="button"
+                  >
+                    {downloadingArtifact
+                      ? "Baixando..."
+                      : selectedScan.scan_type === "nuclei_scan"
+                        ? "Baixar TXT"
+                        : "Baixar TXT"}
+                  </button>
+                ) : null}
                 <button
                   className="h-9 border border-white/15 px-3 text-xs font-semibold uppercase text-slate-200 transition hover:border-cyan-300 hover:text-cyan-200"
                   onClick={() => handleLoadResults(selectedScan)}
@@ -790,7 +979,7 @@ export default function ProjectDetail() {
 
             {loadingResults ? (
               <div className="px-5 py-8 text-sm text-slate-400">Carregando resultados...</div>
-            ) : scanResults.length === 0 ? (
+            ) : visibleScanResults.length === 0 ? (
               <div className="px-5 py-8 text-sm text-slate-400">
                 {isActiveStatus(selectedScan.status)
                   ? "Scan em andamento, nenhum resultado ainda."
@@ -798,7 +987,7 @@ export default function ProjectDetail() {
               </div>
             ) : (
               <div className="divide-y divide-white/10">
-                {scanResults.map((result) => (
+                {visibleScanResults.map((result) => (
                   <article className="px-5 py-4" key={result.id}>
                     {renderResultData(result, selectedScan.scan_type)}
                   </article>

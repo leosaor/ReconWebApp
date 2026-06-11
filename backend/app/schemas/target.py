@@ -12,7 +12,6 @@ class TargetCreate(BaseModel):
 
 class TargetUpdate(BaseModel):
     value: Annotated[str | None, Field(min_length=1, max_length=255)] = None
-    in_scope: bool | None = None
 
 
 class TargetResponse(BaseModel):
@@ -22,5 +21,4 @@ class TargetResponse(BaseModel):
     project_id: uuid.UUID
     value: str
     kind: str
-    in_scope: bool
     created_at: datetime

@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Clavis Recon Surface",
-  description: "Plataforma Clavis para reconhecimento automatizado autorizado",
+  title: "Clavis Recon",
+  description: "Plataforma Clavis para reconhecimento automatizado",
 };
 
 export default function RootLayout({

@@ -63,20 +63,80 @@ def test_criar_port_scan_retorna_202_pending_e_enfileira_task(client, db):
     delay.assert_called_once_with(data["id"])
 
 
-def test_criar_scan_com_target_fora_de_escopo_retorna_422(client, db):
-    user = make_user(db, "scan-out-of-scope@recon.com")
+def test_criar_tls_scan_retorna_202_pending_e_enfileira_task(client, db):
+    user = make_user(db, "scan-tls@recon.com")
     project = make_project(db, user)
     target = make_target(db, project)
-    target.in_scope = False
-    db.commit()
 
-    response = client.post(
-        f"/api/v1/targets/{target.id}/scans",
-        json={"scan_type": "subdomain_enum"},
-        headers=auth_headers(db, user),
-    )
+    with patch("app.tasks.recon.run_tls_scan.delay") as delay:
+        response = client.post(
+            f"/api/v1/targets/{target.id}/scans",
+            json={"scan_type": "tls_scan"},
+            headers=auth_headers(db, user),
+        )
 
-    assert response.status_code == 422
+    assert response.status_code == 202
+    data = response.json()
+    assert data["status"] == ScanStatus.PENDING
+    assert data["scan_type"] == ScanType.TLS_SCAN
+    delay.assert_called_once_with(data["id"])
+
+
+def test_criar_content_fuzz_retorna_202_pending_e_enfileira_task(client, db):
+    user = make_user(db, "scan-fuzz@recon.com")
+    project = make_project(db, user)
+    target = make_target(db, project)
+
+    with patch("app.tasks.recon.run_content_fuzz.delay") as delay:
+        response = client.post(
+            f"/api/v1/targets/{target.id}/scans",
+            json={"scan_type": "content_fuzz"},
+            headers=auth_headers(db, user),
+        )
+
+    assert response.status_code == 202
+    data = response.json()
+    assert data["status"] == ScanStatus.PENDING
+    assert data["scan_type"] == ScanType.CONTENT_FUZZ
+    delay.assert_called_once_with(data["id"])
+
+
+def test_criar_git_dump_retorna_202_pending_e_enfileira_task(client, db):
+    user = make_user(db, "scan-git-dump@recon.com")
+    project = make_project(db, user)
+    target = make_target(db, project)
+
+    with patch("app.tasks.recon.run_git_dump.delay") as delay:
+        response = client.post(
+            f"/api/v1/targets/{target.id}/scans",
+            json={"scan_type": "git_dump"},
+            headers=auth_headers(db, user),
+        )
+
+    assert response.status_code == 202
+    data = response.json()
+    assert data["status"] == ScanStatus.PENDING
+    assert data["scan_type"] == ScanType.GIT_DUMP
+    delay.assert_called_once_with(data["id"])
+
+
+def test_criar_nuclei_scan_retorna_202_pending_e_enfileira_task(client, db):
+    user = make_user(db, "scan-nuclei@recon.com")
+    project = make_project(db, user)
+    target = make_target(db, project)
+
+    with patch("app.tasks.recon.run_nuclei_scan.delay") as delay:
+        response = client.post(
+            f"/api/v1/targets/{target.id}/scans",
+            json={"scan_type": "nuclei_scan"},
+            headers=auth_headers(db, user),
+        )
+
+    assert response.status_code == 202
+    data = response.json()
+    assert data["status"] == ScanStatus.PENDING
+    assert data["scan_type"] == ScanType.NUCLEI_SCAN
+    delay.assert_called_once_with(data["id"])
 
 
 def test_viewer_nao_cria_scan(client, db):

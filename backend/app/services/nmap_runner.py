@@ -1,5 +1,7 @@
 import re
+import os
 import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
 from typing import Any
 
@@ -16,18 +18,34 @@ def _validate_target(target: str) -> None:
         raise ValueError(f"Invalid target: {target!r}")
 
 
-def run_nmap(target: str | list[str]) -> list[dict[str, Any]]:
+def run_nmap(target: str | list[str], *, use_input_file: bool = False) -> list[dict[str, Any]]:
     targets = [target] if isinstance(target, str) else list(target)
     if not targets:
         return []
     for item in targets:
         _validate_target(item)
-    result = subprocess.run(
-        ["nmap", "-sT", "-sV", "-oX", "-", *targets],
-        capture_output=True,
-        text=True,
-        timeout=NMAP_TIMEOUT,
-    )
+
+    tmp_path = None
+    command = ["nmap", "-sT", "-sV", "-oX", "-"]
+    try:
+        if use_input_file:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
+                tmp.write("\n".join(targets) + "\n")
+                tmp_path = tmp.name
+            command.extend(["-iL", tmp_path])
+        else:
+            command.extend(targets)
+
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=NMAP_TIMEOUT,
+        )
+    finally:
+        if tmp_path:
+            os.unlink(tmp_path)
+
     if result.returncode != 0:
         raise RuntimeError(f"nmap exited {result.returncode}: {result.stderr[:200]}")
     return _parse_nmap_xml(result.stdout)

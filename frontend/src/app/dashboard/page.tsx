@@ -15,6 +15,7 @@ import {
 type Project = {
   id: string;
   owner_id: string;
+  owner_name: string;
   name: string;
   description: string | null;
   created_at: string;
@@ -176,7 +177,7 @@ export default function Dashboard() {
       <section className="mx-auto grid max-w-6xl gap-6 px-6 py-8">
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
-            <p className="text-sm font-semibold uppercase text-cyan-200">Recon Surface</p>
+            <p className="text-sm font-semibold uppercase text-cyan-200">Clavis Recon</p>
             <h1 className="mt-2 text-3xl font-semibold text-white">Projetos</h1>
           </div>
           <div className="grid grid-cols-2 border border-white/10 bg-[#0a1f35]">
@@ -207,7 +208,7 @@ export default function Dashboard() {
               <input
                 className="h-11 border border-white/10 bg-[#06111f] px-3 text-slate-100 outline-none transition focus:border-cyan-300"
                 name="name"
-                placeholder="Cliente ou dominio"
+                placeholder="Projeto"
                 type="text"
               />
             </label>
@@ -217,7 +218,7 @@ export default function Dashboard() {
               <textarea
                 className="min-h-24 resize-none border border-white/10 bg-[#06111f] px-3 py-3 text-slate-100 outline-none transition focus:border-cyan-300"
                 name="description"
-                placeholder="Escopo inicial"
+                placeholder="Descrição"
               />
             </label>
 
@@ -263,11 +264,19 @@ export default function Dashboard() {
                           {project.description || "Sem descricao"}
                         </p>
                       </div>
-                      <div className="text-left text-xs uppercase text-slate-500 md:text-right">
-                        <p>Criado em</p>
-                        <p className="mt-1 font-semibold text-slate-300">
-                          {formatDate(project.created_at)}
-                        </p>
+                      <div className="grid gap-3 text-left text-xs uppercase text-slate-500 md:grid-cols-2 md:text-right">
+                        <div>
+                          <p>Criado em</p>
+                          <p className="mt-1 font-semibold text-slate-300">
+                            {formatDate(project.created_at)}
+                          </p>
+                        </div>
+                        <div>
+                          <p>Criado por</p>
+                          <p className="mt-1 max-w-36 truncate font-semibold normal-case text-slate-300">
+                            {project.owner_name}
+                          </p>
+                        </div>
                       </div>
                     </Link>
                     <div className="px-4">

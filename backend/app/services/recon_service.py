@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.project import Project
 from app.models.scan import Scan, ScanStatus, ScanType
@@ -45,9 +45,15 @@ def create_project(db: Session, name: str, description: str | None, owner: User)
 
 def list_projects(db: Session, current_user: User) -> list[Project]:
     if current_user.role == UserRole.ADMIN:
-        return db.query(Project).order_by(Project.created_at.desc()).all()
+        return (
+            db.query(Project)
+            .options(joinedload(Project.owner))
+            .order_by(Project.created_at.desc())
+            .all()
+        )
     return (
         db.query(Project)
+        .options(joinedload(Project.owner))
         .filter(Project.owner_id == current_user.id)
         .order_by(Project.created_at.desc())
         .all()
@@ -88,13 +94,9 @@ def create_target(
     return target
 
 
-def update_target(
-    db: Session, target: Target, value: str | None, in_scope: bool | None
-) -> Target:
+def update_target(db: Session, target: Target, value: str | None) -> Target:
     if value is not None:
         target.value = value
-    if in_scope is not None:
-        target.in_scope = in_scope
     db.commit()
     db.refresh(target)
     return target
@@ -108,11 +110,6 @@ def delete_target(db: Session, target: Target) -> None:
 def create_scan_and_enqueue(
     db: Session, target: Target, scan_type: ScanType
 ) -> Scan:
-    if not target.in_scope:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Target is out of scope",
-        )
     scan = Scan(target_id=target.id, scan_type=scan_type, status=ScanStatus.PENDING)
     db.add(scan)
     db.commit()
@@ -120,10 +117,14 @@ def create_scan_and_enqueue(
 
     from app.tasks.recon import (
         run_clickjacking_task,
+        run_content_fuzz,
         run_domain_spoofing_task,
+        run_git_dump,
         run_header_check,
         run_http_probe,
+        run_nuclei_scan,
         run_port_scan,
+        run_tls_scan,
         run_subdomain_enum,
     )  # lazy import to avoid circular
 
@@ -139,5 +140,13 @@ def create_scan_and_enqueue(
         run_clickjacking_task.delay(str(scan.id))
     elif scan_type == ScanType.DOMAIN_SPOOFING:
         run_domain_spoofing_task.delay(str(scan.id))
+    elif scan_type == ScanType.TLS_SCAN:
+        run_tls_scan.delay(str(scan.id))
+    elif scan_type == ScanType.CONTENT_FUZZ:
+        run_content_fuzz.delay(str(scan.id))
+    elif scan_type == ScanType.GIT_DUMP:
+        run_git_dump.delay(str(scan.id))
+    elif scan_type == ScanType.NUCLEI_SCAN:
+        run_nuclei_scan.delay(str(scan.id))
 
     return scan

@@ -35,3 +35,7 @@ class Project(Base):
     targets: Mapped[list["Target"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+
+    @property
+    def owner_name(self) -> str:
+        return self.owner.full_name or self.owner.email

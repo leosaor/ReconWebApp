@@ -17,11 +17,12 @@ def test_retorna_resultados_jsonl():
 
     assert result == [{"url": "https://example.com", "status_code": 200, "title": "Home"}]
     run.assert_called_once()
-    assert run.call_args.args[0][:3] == ["httpx", "-u", "example.com"]
+    command = run.call_args.args[0]
+    assert command[:3] == ["httpx", "-l", command[2]]
     assert "-json" in run.call_args.args[0]
 
 
-def test_aceita_lista_de_targets_via_stdin():
+def test_aceita_lista_de_targets_via_arquivo_temporario():
     mock_result = MagicMock(
         returncode=0,
         stdout='{"url":"https://api.example.com","status_code":200}\n',
@@ -32,8 +33,24 @@ def test_aceita_lista_de_targets_via_stdin():
         result = run_httpx(["example.com", "api.example.com"])
 
     assert result == [{"url": "https://api.example.com", "status_code": 200}]
-    assert run.call_args.args[0][:3] == ["httpx", "-l", "-"]
-    assert run.call_args.kwargs["input"] == "example.com\napi.example.com\n"
+    command = run.call_args.args[0]
+    assert command[:2] == ["httpx", "-l"]
+    assert command[2].endswith(".txt")
+
+
+def test_aceita_subdominio_com_underscore():
+    mock_result = MagicMock(
+        returncode=0,
+        stdout='{"url":"https://iconapi_elb.dbt.svs.nike.com","status_code":200}\n',
+        stderr="",
+    )
+
+    with patch("subprocess.run", return_value=mock_result) as run:
+        result = run_httpx("iconapi_elb.dbt.svs.nike.com")
+
+    assert result == [{"url": "https://iconapi_elb.dbt.svs.nike.com", "status_code": 200}]
+    command = run.call_args.args[0]
+    assert command[:2] == ["httpx", "-l"]
 
 
 def test_remove_targets_duplicados_preservando_ordem():
@@ -42,7 +59,8 @@ def test_remove_targets_duplicados_preservando_ordem():
     with patch("subprocess.run", return_value=mock_result) as run:
         run_httpx(["example.com", "EXAMPLE.com", "api.example.com"])
 
-    assert run.call_args.kwargs["input"] == "example.com\napi.example.com\n"
+    command = run.call_args.args[0]
+    assert command[:2] == ["httpx", "-l"]
 
 
 def test_ignora_linhas_vazias():
@@ -88,3 +106,29 @@ def test_subprocess_nao_usa_shell():
     _, kwargs = run.call_args
     assert kwargs.get("shell") is None
     assert isinstance(run.call_args.args[0], list)
+
+
+def test_match_code_200_sem_follow_redirects_por_padrao():
+    mock_result = MagicMock(
+        returncode=0,
+        stdout='{"url":"https://example.com","status_code":200}\n',
+        stderr="",
+    )
+
+    with patch("subprocess.run", return_value=mock_result) as run:
+        run_httpx("example.com", match_code="200")
+
+    command = run.call_args.args[0]
+    assert "-fr" not in command
+    assert "-mc" in command
+    assert command[command.index("-mc") + 1] == "200"
+
+
+def test_follow_redirects_quando_solicitado():
+    mock_result = MagicMock(returncode=0, stdout="", stderr="")
+
+    with patch("subprocess.run", return_value=mock_result) as run:
+        run_httpx("example.com", follow_redirects=True)
+
+    command = run.call_args.args[0]
+    assert "-fr" in command

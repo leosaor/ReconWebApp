@@ -119,10 +119,11 @@ export default function AdminPage() {
     setUpdatingId(user.id);
 
     try {
+      const shouldActivate = !user.is_active && role !== "viewer";
       const response = await requestWithAuth(`/users/${user.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role }),
+        body: JSON.stringify({ role, ...(shouldActivate ? { is_active: true } : {}) }),
       });
 
       if (!response) return;

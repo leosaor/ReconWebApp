@@ -30,7 +30,8 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        setError("Usuario ou senha invalidos.");
+        const body = (await response.json().catch(() => ({}))) as { detail?: string };
+        setError(body.detail ?? "Usuario ou senha invalidos.");
         return;
       }
 
@@ -60,7 +61,7 @@ export default function Home() {
         <div className="mb-8">
           <h1 className="text-2xl font-semibold text-white">Entrar na plataforma</h1>
           <p className="mt-2 text-sm leading-6 text-slate-400">
-            Acesso restrito para usuarios autorizados.
+            Clavis
           </p>
         </div>
 
@@ -85,12 +86,12 @@ export default function Home() {
             />
           </label>
 
-          <div className="text-sm">
+          {/* <div className="text-sm">
             <label className="flex items-center gap-2 text-slate-300">
               <input className="h-4 w-4 accent-cyan-300" name="remember" type="checkbox" />
               Manter conectado
             </label>
-          </div>
+          </div> */}
 
           {error ? (
             <p className="border border-red-400/30 bg-red-400/10 px-3 py-2 text-sm text-red-200">

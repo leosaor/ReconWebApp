@@ -18,9 +18,12 @@ from app.models.user import User, UserRole
 from app.schemas.auth import ApiKeyCreated, LoginRequest, RegisterRequest, TokenResponse
 
 
-def register_user(payload: RegisterRequest, db: Session, request: Request) -> User:
+_REGISTER_MESSAGE = "Se o e-mail não estiver cadastrado, sua conta será criada e aguardará aprovação do administrador."
+
+
+def register_user(payload: RegisterRequest, db: Session, request: Request) -> str:
     if db.query(User).filter(User.email == payload.email).first():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado")
+        return _REGISTER_MESSAGE
 
     is_first_user = db.query(User).count() == 0
     user = User(
@@ -28,14 +31,14 @@ def register_user(payload: RegisterRequest, db: Session, request: Request) -> Us
         email=payload.email,
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
-        role=UserRole.ADMIN if is_first_user else UserRole.PENTESTER,
+        role=UserRole.ADMIN if is_first_user else UserRole.VIEWER,
+        is_active=is_first_user,
     )
     db.add(user)
     db.flush()
     _audit(db, user_id=user.id, action="user.register", entity="user", entity_id=str(user.id), request=request)
     db.commit()
-    db.refresh(user)
-    return user
+    return _REGISTER_MESSAGE
 
 
 def login_user(payload: LoginRequest, db: Session, request: Request) -> tuple[TokenResponse, str]:
@@ -46,7 +49,10 @@ def login_user(payload: LoginRequest, db: Session, request: Request) -> tuple[To
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas"
         )
     if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Conta desativada")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Usuario inativo, contate um administrador",
+        )
 
     access = create_access_token(str(user.id))
     refresh = create_refresh_token(str(user.id))

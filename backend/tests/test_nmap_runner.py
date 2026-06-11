@@ -128,3 +128,16 @@ def test_aceita_ip_como_target(mock_run):
     mock_run.return_value = _mock_run(_XML_EMPTY)
     result = run_nmap("192.168.1.1")
     assert result == []
+
+
+@patch("app.services.nmap_runner.subprocess.run")
+def test_usa_input_file_quando_solicitado(mock_run):
+    mock_run.return_value = _mock_run(_XML_EMPTY)
+    result = run_nmap(["example.com", "api.example.com"], use_input_file=True)
+    assert result == []
+
+    args, _ = mock_run.call_args
+    cmd = args[0]
+    assert "-iL" in cmd
+    assert cmd[cmd.index("-iL") + 1].endswith(".txt")
+    assert "example.com" not in cmd

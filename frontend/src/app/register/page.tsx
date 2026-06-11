@@ -40,11 +40,6 @@ export default function Register() {
         body: JSON.stringify({ email, password, full_name }),
       });
 
-      if (response.status === 409) {
-        setError("Email ja cadastrado.");
-        return;
-      }
-
       if (!response.ok) {
         const body = await response.json().catch(() => ({})) as { detail?: string };
         setError(body.detail ?? "Erro ao criar conta.");
@@ -69,7 +64,7 @@ export default function Register() {
           <div className="mb-8">
             <h1 className="text-2xl font-semibold text-white">Conta criada</h1>
             <p className="mt-2 text-sm leading-6 text-slate-400">
-              Sua conta foi criada com sucesso. Entre para comecar.
+              Sua conta foi criada e aguarda aprovacao de um administrador.
             </p>
           </div>
           <Link

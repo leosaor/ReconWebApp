@@ -92,7 +92,7 @@ def update_target(
 ):
     recon_service.get_project_or_404(db, project_id, current_user)
     target = recon_service.get_target_or_404(db, target_id, current_user)
-    return recon_service.update_target(db, target, body.value, body.in_scope)
+    return recon_service.update_target(db, target, body.value)
 
 
 @router.delete("/{project_id}/targets/{target_id}", status_code=status.HTTP_204_NO_CONTENT)

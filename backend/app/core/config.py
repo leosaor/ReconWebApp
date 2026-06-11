@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     celery_broker_url: str | None = None
     celery_result_backend: str | None = None
+    recon_output_dir: str = "scan-output"
 
     cors_origins: list[str] = ["*"]
 

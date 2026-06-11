@@ -24,9 +24,9 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     full_name: Mapped[str | None] = mapped_column(sa.String(255))
     role: Mapped[UserRole] = mapped_column(
-        sa.Enum(UserRole, name="userrole"), default=UserRole.PENTESTER, nullable=False
+        sa.Enum(UserRole, name="userrole"), default=UserRole.VIEWER, nullable=False
     )
-    is_active: Mapped[bool] = mapped_column(sa.Boolean, default=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(sa.Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )

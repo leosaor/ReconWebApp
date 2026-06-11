@@ -22,7 +22,6 @@ class Target(Base):
     )
     value: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     kind: Mapped[str] = mapped_column(sa.String(20), nullable=False, default="domain")
-    in_scope: Mapped[bool] = mapped_column(sa.Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )

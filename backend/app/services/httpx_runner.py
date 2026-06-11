@@ -6,8 +6,8 @@ from collections.abc import Sequence
 from typing import Any
 
 _TARGET_RE = re.compile(
-    r"^(https?://)?[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?"
-    r"(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*(:[0-9]{1,5})?$"
+    r"^(https?://)?[a-zA-Z0-9_]([a-zA-Z0-9_\-]{0,61}[a-zA-Z0-9_])?"
+    r"(\.[a-zA-Z0-9_]([a-zA-Z0-9_\-]{0,61}[a-zA-Z0-9_])?)*(:[0-9]{1,5})?$"
 )
 HTTPX_TIMEOUT = 300
 
@@ -17,7 +17,12 @@ def _validate_target(target: str) -> None:
         raise ValueError(f"Invalid target: {target!r}")
 
 
-def run_httpx(target: str | Sequence[str]) -> list[dict[str, Any]]:
+def run_httpx(
+    target: str | Sequence[str],
+    *,
+    match_code: str | None = None,
+    follow_redirects: bool = False,
+) -> list[dict[str, Any]]:
     targets = _normalize_targets(target)
     if not targets:
         return []
@@ -38,6 +43,11 @@ def run_httpx(target: str | Sequence[str]) -> list[dict[str, Any]]:
         "-content-type",
         "-probe",
     ]
+
+    if follow_redirects:
+        command.append("-fr")
+    if match_code:
+        command.extend(["-mc", match_code])
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
         tmp.write("\n".join(targets) + "\n")

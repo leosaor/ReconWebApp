@@ -57,19 +57,19 @@ def test_listar_targets_retorna_lista_do_projeto(client, db):
     assert [target["value"] for target in response.json()] == ["example.com"]
 
 
-def test_patch_target_atualiza_in_scope(client, db):
+def test_patch_target_atualiza_value(client, db):
     user = make_user(db, "target-patch@recon.com")
     project = make_project(db, user)
     target = make_target(db, project)
 
     response = client.patch(
         f"/api/v1/projects/{project.id}/targets/{target.id}",
-        json={"in_scope": False},
+        json={"value": "api.example.com"},
         headers=auth_headers(db, user),
     )
 
     assert response.status_code == 200
-    assert response.json()["in_scope"] is False
+    assert response.json()["value"] == "api.example.com"
 
 
 def test_delete_target_retorna_204(client, db):

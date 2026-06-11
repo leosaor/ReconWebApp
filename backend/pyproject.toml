@@ -20,6 +20,7 @@ dependencies = [
     "requests>=2.32",
     "rich>=13.0",
     "shcheck>=1.7",
+    "git-dumper>=1.0.8",
 ]
 
 [project.optional-dependencies]

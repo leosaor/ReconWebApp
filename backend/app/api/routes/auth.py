@@ -14,6 +14,7 @@ from app.schemas.auth import (
     ApiKeyResponse,
     LoginRequest,
     RegisterRequest,
+    RegisterResponse,
     TokenResponse,
 )
 from app.schemas.user import UserResponse
@@ -25,9 +26,10 @@ _REFRESH_COOKIE = "refresh_token"
 _COOKIE_MAX_AGE = 7 * 24 * 3600
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, request: Request, db: Session = Depends(get_db)) -> User:
-    return auth_service.register_user(payload, db, request)
+@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
+def register(payload: RegisterRequest, request: Request, db: Session = Depends(get_db)) -> RegisterResponse:
+    message = auth_service.register_user(payload, db, request)
+    return RegisterResponse(message=message)
 
 
 @router.post("/login", response_model=TokenResponse)

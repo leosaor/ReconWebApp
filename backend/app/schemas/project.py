@@ -20,6 +20,7 @@ class ProjectResponse(BaseModel):
 
     id: uuid.UUID
     owner_id: uuid.UUID
+    owner_name: str
     name: str
     description: str | None
     created_at: datetime

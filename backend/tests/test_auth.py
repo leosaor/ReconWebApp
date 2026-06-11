@@ -28,10 +28,11 @@ def test_primeiro_usuario_vira_admin(client):
     assert user["is_active"] is True
 
 
-def test_segundo_usuario_vira_pentester(client):
+def test_segundo_usuario_nasce_viewer_inativo(client):
     _register(client, "admin@recon.com")
-    user = _register(client, "pentester@recon.com")
-    assert user["role"] == "pentester"
+    user = _register(client, "novo@recon.com")
+    assert user["role"] == "viewer"
+    assert user["is_active"] is False
 
 
 def test_email_duplicado_retorna_409(client):
@@ -71,6 +72,14 @@ def test_login_senha_errada_retorna_401(client):
 def test_login_email_inexistente_retorna_401(client):
     r = client.post("/auth/login", json={"email": "nao@existe.com", "password": "senha1234"})
     assert r.status_code == 401
+
+
+def test_login_usuario_inativo_retorna_403(client):
+    _register(client, "admin-inactive@recon.com")
+    _register(client, "inactive@recon.com")
+    r = client.post("/auth/login", json={"email": "inactive@recon.com", "password": "senha1234"})
+    assert r.status_code == 403
+    assert r.json()["detail"] == "Usuario inativo, contate um administrador"
 
 
 # ── /auth/me ──────────────────────────────────────────────────────────────────
@@ -142,7 +151,13 @@ def test_admin_lista_todos_usuarios(client):
 
 def test_pentester_nao_acessa_lista_usuarios(client):
     _register(client, "adm3@recon.com")
-    _register(client, "pen3@recon.com")
+    user = _register(client, "pen3@recon.com")
+    admin_token = _login(client, "adm3@recon.com")
+    client.patch(
+        f"/users/{user['id']}",
+        json={"role": "pentester", "is_active": True},
+        headers=_auth(admin_token),
+    )
     token = _login(client, "pen3@recon.com")
     r = client.get("/users", headers=_auth(token))
     assert r.status_code == 403

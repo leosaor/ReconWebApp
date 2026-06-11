@@ -9,7 +9,7 @@ SHCHECK_TIMEOUT = 60
 
 
 def run_shcheck(target: str) -> list[dict[str, Any]]:
-    url = target if target.startswith("http") else f"https://{target}"
+    url = target if target.startswith("http") else f"{target}"
     result = subprocess.run(
         ["shcheck.py", "-d", url],
         capture_output=True,

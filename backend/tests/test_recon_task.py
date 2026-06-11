@@ -5,11 +5,14 @@ import pytest
 
 from app.models.scan import ScanStatus, ScanType
 from app.models.scan_result import ScanResult
+from app.services.artifacts import subdomains_path
 from app.tasks.recon import run_subdomain_enum
 from tests.factories import make_project, make_scan, make_target, make_user
 
 
-def test_task_sucesso_completa_scan(db):
+def test_task_sucesso_completa_scan(db, monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.artifacts.settings.recon_output_dir", str(tmp_path))
+
     user = make_user(db, "task_ok@recon.com")
     project = make_project(db, user)
     target = make_target(db, project, "example.com")
@@ -30,6 +33,13 @@ def test_task_sucesso_completa_scan(db):
     assert len(results) == 2
     values = {r.value for r in results}
     assert values == {"sub1.example.com", "sub2.example.com"}
+
+    artifact_path = subdomains_path(target)
+    assert result["file"] == str(artifact_path)
+    assert artifact_path.read_text(encoding="utf-8").splitlines() == [
+        "sub1.example.com",
+        "sub2.example.com",
+    ]
 
 
 def test_task_scan_inexistente_retorna_missing(db):

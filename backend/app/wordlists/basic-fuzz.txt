@@ -1,0 +1,15 @@
+admin
+api
+assets
+backup
+config
+dashboard
+dev
+docs
+login
+robots.txt
+server-status
+static
+swagger
+test
+uploads

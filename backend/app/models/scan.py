@@ -15,6 +15,10 @@ class ScanType(StrEnum):
     HEADER_CHECK = "header_check"
     CLICKJACKING = "clickjacking"
     DOMAIN_SPOOFING = "domain_spoofing"
+    TLS_SCAN = "tls_scan"
+    CONTENT_FUZZ = "content_fuzz"
+    GIT_DUMP = "git_dump"
+    NUCLEI_SCAN = "nuclei_scan"
 
 
 class ScanStatus(StrEnum):
