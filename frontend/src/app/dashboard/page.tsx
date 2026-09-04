@@ -4,12 +4,10 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
 import {
-  API_URL,
-  clearStoredToken,
+  apiFetch,
   CurrentUser,
   fetchCurrentUser,
   formatDate,
-  getStoredToken,
 } from "@/lib/auth";
 
 type Project = {
@@ -34,28 +32,22 @@ export default function Dashboard() {
   const latestProject = useMemo(() => projects[0], [projects]);
 
   useEffect(() => {
-    const token = getStoredToken();
-    if (!token) {
-      window.location.href = "/";
-      return;
-    }
+    fetchCurrentUser().then((user) => {
+      if (!user) {
+        window.location.href = "/";
+        return;
+      }
+      setCurrentUser(user);
+    }).catch(() => {});
 
-    fetchCurrentUser().then(setCurrentUser).catch(() => {});
-    fetchProjects(token)
+    fetchProjects()
       .catch(() => setError("Nao foi possivel carregar os projetos."))
       .finally(() => setLoading(false));
   }, []);
 
-  async function fetchProjects(token: string) {
-    const response = await fetch(`${API_URL}/api/v1/projects`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (response.status === 401 || response.status === 403) {
-      clearStoredToken();
-      window.location.href = "/";
-      return;
-    }
+  async function fetchProjects() {
+    const response = await apiFetch("/api/v1/projects");
+    if (!response) return;
 
     if (!response.ok) throw new Error("projects_failed");
 
@@ -67,12 +59,6 @@ export default function Dashboard() {
     event.preventDefault();
     setError("");
     setCreating(true);
-
-    const token = getStoredToken();
-    if (!token) {
-      window.location.href = "/";
-      return;
-    }
 
     const form = event.currentTarget;
     const formData = new FormData(form);
@@ -86,21 +72,13 @@ export default function Dashboard() {
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/v1/projects`, {
+      const response = await apiFetch("/api/v1/projects", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, description: description || null }),
       });
 
-      if (response.status === 401 || response.status === 403) {
-        clearStoredToken();
-        window.location.href = "/";
-        return;
-      }
-
+      if (!response) return;
       if (!response.ok) throw new Error("create_failed");
 
       const created = (await response.json()) as Project;
@@ -115,24 +93,16 @@ export default function Dashboard() {
 
   async function handleDeleteConfirm() {
     if (!confirmDelete) return;
-    const token = getStoredToken();
-    if (!token) return;
 
     setDeleting(confirmDelete.id);
     setConfirmDelete(null);
 
     try {
-      const response = await fetch(`${API_URL}/api/v1/projects/${confirmDelete.id}`, {
+      const response = await apiFetch(`/api/v1/projects/${confirmDelete.id}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
       });
 
-      if (response.status === 401 || response.status === 403) {
-        clearStoredToken();
-        window.location.href = "/";
-        return;
-      }
-
+      if (!response) return;
       if (!response.ok) throw new Error("delete_failed");
 
       setProjects((current) => current.filter((p) => p.id !== confirmDelete.id));

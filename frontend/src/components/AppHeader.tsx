@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { clearStoredToken } from "@/lib/auth";
+import { API_URL } from "@/lib/auth";
 import type { CurrentUser } from "@/lib/auth";
 
 type AppHeaderProps = {
@@ -11,8 +11,11 @@ type AppHeaderProps = {
 };
 
 export function AppHeader({ user }: AppHeaderProps) {
-  function handleLogout() {
-    clearStoredToken();
+  async function handleLogout() {
+    await fetch(`${API_URL}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    }).catch(() => {});
     window.location.href = "/";
   }
 

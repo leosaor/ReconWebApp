@@ -10,19 +10,6 @@ export type CurrentUser = {
   is_active: boolean;
 };
 
-export function getStoredToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return (
-    window.localStorage.getItem("access_token") ??
-    window.sessionStorage.getItem("access_token")
-  );
-}
-
-export function clearStoredToken(): void {
-  window.localStorage.removeItem("access_token");
-  window.sessionStorage.removeItem("access_token");
-}
-
 export function formatDate(value: string): string {
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
@@ -32,15 +19,27 @@ export function formatDate(value: string): string {
 }
 
 export async function fetchCurrentUser(): Promise<CurrentUser | null> {
-  const token = getStoredToken();
-  if (!token) return null;
   try {
     const response = await fetch(`${API_URL}/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: "include",
     });
     if (!response.ok) return null;
     return (await response.json()) as CurrentUser;
   } catch {
     return null;
   }
+}
+
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response | null> {
+  const response = await fetch(`${API_URL}${path}`, {
+    ...init,
+    credentials: "include",
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    window.location.href = "/";
+    return null;
+  }
+
+  return response;
 }

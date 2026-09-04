@@ -3,12 +3,10 @@
 import { FormEvent, useEffect, useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import {
-  API_URL,
-  clearStoredToken,
+  apiFetch,
   CurrentUser,
   fetchCurrentUser,
   formatDate,
-  getStoredToken,
 } from "@/lib/auth";
 
 type ApiKey = {
@@ -28,30 +26,6 @@ type ApiKeyCreated = {
   created_at: string;
 };
 
-async function requestWithAuth(path: string, init: RequestInit = {}): Promise<Response | null> {
-  const token = getStoredToken();
-  if (!token) {
-    clearStoredToken();
-    window.location.href = "/";
-    return null;
-  }
-
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(init.headers ?? {}),
-    },
-  });
-
-  if (response.status === 401 || response.status === 403) {
-    clearStoredToken();
-    window.location.href = "/";
-    return null;
-  }
-
-  return response;
-}
 
 export default function ApiKeysPage() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
@@ -64,18 +38,18 @@ export default function ApiKeysPage() {
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = getStoredToken();
-    if (!token) {
-      window.location.href = "/";
-      return;
-    }
-
-    fetchCurrentUser().then(setCurrentUser).catch(() => {});
+    fetchCurrentUser().then((user) => {
+      if (!user) {
+        window.location.href = "/";
+        return;
+      }
+      setCurrentUser(user);
+    }).catch(() => {});
     loadKeys().finally(() => setLoading(false));
   }, []);
 
   async function loadKeys() {
-    const response = await requestWithAuth("/auth/api-keys");
+    const response = await apiFetch("/auth/api-keys");
     if (!response) return;
     if (!response.ok) {
       setError("Nao foi possivel carregar as chaves.");
@@ -102,7 +76,7 @@ export default function ApiKeysPage() {
     }
 
     try {
-      const response = await requestWithAuth("/auth/api-keys", {
+      const response = await apiFetch("/auth/api-keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -141,7 +115,7 @@ export default function ApiKeysPage() {
     setConfirmRevokeId(null);
 
     try {
-      const response = await requestWithAuth(`/auth/api-keys/${keyId}`, {
+      const response = await apiFetch(`/auth/api-keys/${keyId}`, {
         method: "DELETE",
       });
 

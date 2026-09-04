@@ -2,10 +2,13 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from app.core.validation import validate_target_value
+
 NUCLEI_TIMEOUT = 1200
 
 
 def run_nuclei(target: str, output_file: Path) -> list[dict[str, Any]]:
+    validate_target_value(target)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.unlink(missing_ok=True)
 

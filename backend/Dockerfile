@@ -43,6 +43,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Instala dependencias Python a partir do pyproject (camada cacheavel).
 COPY pyproject.toml ./
+COPY alembic ./alembic
+COPY alembic.ini ./alembic.ini
 COPY app ./app
 RUN pip install . \
     && playwright install chromium --with-deps \

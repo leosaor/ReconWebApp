@@ -5,6 +5,8 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
+from app.core.validation import validate_target_value
+
 DNS_TIMEOUT = 15
 
 
@@ -34,6 +36,7 @@ def _to_svg_b64(lines: list[tuple[str, str]], title: str) -> str:
 
 
 def run_domain_spoofing(target: str) -> list[dict[str, Any]]:
+    validate_target_value(target)
     domain = _clean_domain(target)
     results: list[dict[str, Any]] = []
 

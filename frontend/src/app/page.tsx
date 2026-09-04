@@ -15,8 +15,6 @@ export default function Home() {
     setLoading(true);
 
     const formData = new FormData(event.currentTarget);
-    const keepConnected = formData.get("remember") === "on";
-    const storage = keepConnected ? window.localStorage : window.sessionStorage;
 
     try {
       const response = await fetch(`${API_URL}/auth/login`, {
@@ -35,8 +33,6 @@ export default function Home() {
         return;
       }
 
-      const data = (await response.json()) as { access_token: string };
-      storage.setItem("access_token", data.access_token);
       window.location.href = "/dashboard";
     } catch {
       setError("Nao foi possivel conectar ao servidor.");

@@ -6,11 +6,10 @@ import { useParams } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import {
   API_URL,
-  clearStoredToken,
+  apiFetch,
   CurrentUser,
   fetchCurrentUser,
   formatDate,
-  getStoredToken,
 } from "@/lib/auth";
 
 type Project = {
@@ -128,30 +127,6 @@ function shouldShowFuzzingResult(result: ScanResult): boolean {
   return !extension || !FUZZING_HIDDEN_EXTENSIONS.has(extension);
 }
 
-async function requestWithAuth(path: string, init: RequestInit = {}): Promise<Response | null> {
-  const token = getStoredToken();
-  if (!token) {
-    clearStoredToken();
-    window.location.href = "/";
-    return null;
-  }
-
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(init.headers ?? {}),
-    },
-  });
-
-  if (response.status === 401 || response.status === 403) {
-    clearStoredToken();
-    window.location.href = "/";
-    return null;
-  }
-
-  return response;
-}
 
 export default function ProjectDetail() {
   const params = useParams<{ id: string }>();
@@ -189,7 +164,10 @@ export default function ProjectDetail() {
   }, [selectedScan]);
 
   useEffect(() => {
-    fetchCurrentUser().then(setCurrentUser).catch(() => {});
+    fetchCurrentUser().then((user) => {
+      if (!user) { window.location.href = "/"; return; }
+      setCurrentUser(user);
+    }).catch(() => {});
     loadProject()
       .catch(() => setError("Nao foi possivel carregar o projeto."))
       .finally(() => setLoading(false));
@@ -203,12 +181,9 @@ export default function ProjectDetail() {
     if (activeScans.length === 0) return;
 
     const intervalId = setInterval(() => {
-      const token = getStoredToken();
-      if (!token) return;
-
       activeScans.forEach((scan) => {
         fetch(`${API_URL}/api/v1/scans/${scan.id}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          credentials: "include",
         })
           .then((r) => (r.ok ? (r.json() as Promise<Scan>) : null))
           .then((updated) => {
@@ -231,7 +206,7 @@ export default function ProjectDetail() {
   }, [scansByTarget]);
 
   async function loadProject() {
-    const projectResponse = await requestWithAuth(`/api/v1/projects/${projectId}`);
+    const projectResponse = await apiFetch(`/api/v1/projects/${projectId}`);
     if (!projectResponse) return;
 
     if (projectResponse.status === 404) {
@@ -241,14 +216,14 @@ export default function ProjectDetail() {
 
     if (!projectResponse.ok) throw new Error("project_failed");
 
-    const targetResponse = await requestWithAuth(`/api/v1/projects/${projectId}/targets`);
+    const targetResponse = await apiFetch(`/api/v1/projects/${projectId}/targets`);
     if (!targetResponse || !targetResponse.ok) throw new Error("targets_failed");
 
     const projectData = (await projectResponse.json()) as Project;
     const targetData = (await targetResponse.json()) as Target[];
     const scanEntries = await Promise.all(
       targetData.map(async (target) => {
-        const scanResponse = await requestWithAuth(`/api/v1/targets/${target.id}/scans`);
+        const scanResponse = await apiFetch(`/api/v1/targets/${target.id}/scans`);
         if (!scanResponse || !scanResponse.ok) return [target.id, []] as const;
         const scans = (await scanResponse.json()) as Scan[];
         return [target.id, scans] as const;
@@ -261,7 +236,7 @@ export default function ProjectDetail() {
   }
 
   async function startOneScan(targetId: string, scanType: ScanType): Promise<Scan | null> {
-    const response = await requestWithAuth(`/api/v1/targets/${targetId}/scans`, {
+    const response = await apiFetch(`/api/v1/targets/${targetId}/scans`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scan_type: scanType }),
@@ -278,17 +253,9 @@ export default function ProjectDetail() {
   function waitForScan(scanId: string, targetId: string): Promise<void> {
     return new Promise((resolve) => {
       const intervalId = setInterval(async () => {
-        const token = getStoredToken();
-        if (!token) {
-          clearInterval(intervalId);
-          resolve();
-          return;
-        }
         try {
-          const r = await fetch(`${API_URL}/api/v1/scans/${scanId}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (!r.ok) {
+          const r = await apiFetch(`/api/v1/scans/${scanId}`);
+          if (!r || !r.ok) {
             clearInterval(intervalId);
             resolve();
             return;
@@ -358,7 +325,7 @@ export default function ProjectDetail() {
     }
 
     try {
-      const response = await requestWithAuth(`/api/v1/projects/${projectId}/targets`, {
+      const response = await apiFetch(`/api/v1/projects/${projectId}/targets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ value, kind: "domain" }),
@@ -390,7 +357,7 @@ export default function ProjectDetail() {
     setDeletingTarget(targetId);
 
     try {
-      const response = await requestWithAuth(
+      const response = await apiFetch(
         `/api/v1/projects/${projectId}/targets/${targetId}`,
         { method: "DELETE" },
       );
@@ -421,7 +388,7 @@ export default function ProjectDetail() {
     setLoadingResults(true);
 
     try {
-      const response = await requestWithAuth(`/api/v1/scans/${scan.id}/results`);
+      const response = await apiFetch(`/api/v1/scans/${scan.id}/results`);
       if (!response) return;
       if (!response.ok) throw new Error("results_failed");
       const results = (await response.json()) as ScanResult[];
@@ -438,7 +405,7 @@ export default function ProjectDetail() {
     setDownloadingArtifact(true);
 
     try {
-      const response = await requestWithAuth(`/api/v1/scans/${scan.id}/artifact`);
+      const response = await apiFetch(`/api/v1/scans/${scan.id}/artifact`);
       if (!response) return;
       if (!response.ok) throw new Error("artifact_failed");
 

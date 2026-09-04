@@ -3,12 +3,10 @@
 import { useEffect, useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import {
-  API_URL,
-  clearStoredToken,
+  apiFetch,
   CurrentUser,
   fetchCurrentUser,
   formatDate,
-  getStoredToken,
 } from "@/lib/auth";
 
 type UserRole = "admin" | "pentester" | "viewer";
@@ -28,30 +26,6 @@ const roleLabels: Record<UserRole, string> = {
   viewer: "Viewer",
 };
 
-async function requestWithAuth(path: string, init: RequestInit = {}): Promise<Response | null> {
-  const token = getStoredToken();
-  if (!token) {
-    clearStoredToken();
-    window.location.href = "/";
-    return null;
-  }
-
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(init.headers ?? {}),
-    },
-  });
-
-  if (response.status === 401 || response.status === 403) {
-    clearStoredToken();
-    window.location.href = "/";
-    return null;
-  }
-
-  return response;
-}
 
 export default function AdminPage() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
@@ -61,19 +35,19 @@ export default function AdminPage() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = getStoredToken();
-    if (!token) {
-      window.location.href = "/";
-      return;
-    }
-
-    fetchCurrentUser().then(setCurrentUser).catch(() => {});
+    fetchCurrentUser().then((user) => {
+      if (!user) {
+        window.location.href = "/";
+        return;
+      }
+      setCurrentUser(user);
+    }).catch(() => {});
     loadUsers();
   }, []);
 
   async function loadUsers() {
     try {
-      const response = await requestWithAuth("/users");
+      const response = await apiFetch("/users");
       if (!response) return;
       if (!response.ok) {
         setError("Nao foi possivel carregar os usuarios.");
@@ -93,7 +67,7 @@ export default function AdminPage() {
     setUpdatingId(user.id);
 
     try {
-      const response = await requestWithAuth(`/users/${user.id}`, {
+      const response = await apiFetch(`/users/${user.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: !user.is_active }),
@@ -120,7 +94,7 @@ export default function AdminPage() {
 
     try {
       const shouldActivate = !user.is_active && role !== "viewer";
-      const response = await requestWithAuth(`/users/${user.id}`, {
+      const response = await apiFetch(`/users/${user.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ role, ...(shouldActivate ? { is_active: true } : {}) }),
