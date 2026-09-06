@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     max_active_scans_per_user: int = 8
     max_active_scans_per_target: int = 3
     scan_create_rate_limit: str = "20/minute"
+    block_private_targets: bool = True
+    resolve_target_dns_for_private_ip_check: bool = True
 
     @property
     def is_production(self) -> bool:

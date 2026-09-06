@@ -4,6 +4,8 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
+from app.core.validation import assert_public_target
+from app.models.audit_log import AuditLog
 from app.models.project import Project
 from app.models.scan import Scan, ScanStatus, ScanType
 from app.models.scan_result import ScanResult
@@ -81,6 +83,7 @@ def delete_project(db: Session, project: Project) -> None:
 def create_target(
     db: Session, project: Project, value: str, kind: str
 ) -> Target:
+    _enforce_public_target(value)
     existing = (
         db.query(Target)
         .filter(Target.project_id == project.id, Target.value == value)
@@ -97,6 +100,7 @@ def create_target(
 
 def update_target(db: Session, target: Target, value: str | None) -> Target:
     if value is not None:
+        _enforce_public_target(value)
         target.value = value
     db.commit()
     db.refresh(target)
@@ -109,14 +113,26 @@ def delete_target(db: Session, target: Target) -> None:
 
 
 def create_scan_and_enqueue(
-    db: Session, target: Target, scan_type: ScanType, current_user: User
+    db: Session,
+    target: Target,
+    scan_type: ScanType,
+    current_user: User,
+    request_ip: str | None = None,
 ) -> Scan:
+    _enforce_public_target(target.value)
     _enforce_active_scan_limits(db, target, current_user)
 
     scan = Scan(target_id=target.id, scan_type=scan_type, status=ScanStatus.PENDING)
     db.add(scan)
     db.commit()
     db.refresh(scan)
+    _audit_scan_event(
+        db,
+        scan=scan,
+        action="scan.enqueue",
+        user_id=current_user.id,
+        ip_address=request_ip,
+    )
 
     from app.tasks.recon import (
         run_clickjacking_task,
@@ -155,6 +171,21 @@ def create_scan_and_enqueue(
     return scan
 
 
+def _enforce_public_target(value: str) -> None:
+    if not settings.block_private_targets:
+        return
+    try:
+        assert_public_target(
+            value,
+            resolve_dns=settings.resolve_target_dns_for_private_ip_check,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
 def _enforce_active_scan_limits(db: Session, target: Target, current_user: User) -> None:
     active_statuses = [ScanStatus.PENDING, ScanStatus.RUNNING]
     active_for_target = (
@@ -181,3 +212,35 @@ def _enforce_active_scan_limits(db: Session, target: Target, current_user: User)
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Limite de scans ativos atingido",
         )
+
+
+def _audit_scan_event(
+    db: Session,
+    *,
+    scan: Scan,
+    action: str,
+    user_id: uuid.UUID | None,
+    ip_address: str | None,
+    metadata: dict | None = None,
+) -> None:
+    payload = {
+        "scan_type": scan.scan_type.value,
+        "status": scan.status.value,
+        "target": scan.target.value,
+        "target_id": str(scan.target_id),
+        "project_id": str(scan.target.project_id),
+    }
+    if metadata:
+        payload.update(metadata)
+    db.add(
+        AuditLog(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            action=action,
+            entity="scan",
+            entity_id=str(scan.id),
+            ip_address=ip_address,
+            metadata_=payload,
+        )
+    )
+    db.commit()

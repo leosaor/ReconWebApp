@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from app.models.audit_log import AuditLog
 from app.models.scan import ScanStatus, ScanType
 from app.models.scan_result import ScanResult
 from app.models.user import UserRole
@@ -23,6 +24,14 @@ def test_criar_scan_retorna_202_pending_e_enfileira_task(client, db):
     assert data["status"] == ScanStatus.PENDING
     assert data["scan_type"] == ScanType.SUBDOMAIN_ENUM
     delay.assert_called_once_with(data["id"])
+
+    audit = db.query(AuditLog).filter(AuditLog.action == "scan.enqueue").one()
+    assert audit.user_id == user.id
+    assert audit.entity == "scan"
+    assert audit.entity_id == data["id"]
+    assert audit.metadata_["scan_type"] == ScanType.SUBDOMAIN_ENUM
+    assert audit.metadata_["target"] == target.value
+    assert audit.metadata_["project_id"] == str(project.id)
 
 
 def test_criar_http_probe_retorna_202_pending_e_enfileira_task(client, db):

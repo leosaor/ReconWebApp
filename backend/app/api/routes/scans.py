@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_db, require_writer
 from app.core.config import settings
-from app.core.rate_limit import limiter
+from app.core.rate_limit import get_client_ip, limiter
 from app.models.scan import ScanType
 from app.models.user import User
 from app.schemas.scan import ScanCreate, ScanResponse, ScanResultResponse
@@ -26,7 +26,13 @@ def create_scan(
     current_user: User = Depends(require_writer),
 ):
     target = recon_service.get_target_or_404(db, target_id, current_user)
-    return recon_service.create_scan_and_enqueue(db, target, body.scan_type, current_user)
+    return recon_service.create_scan_and_enqueue(
+        db,
+        target,
+        body.scan_type,
+        current_user,
+        request_ip=get_client_ip(request),
+    )
 
 
 @router.get("/targets/{target_id}/scans", response_model=list[ScanResponse])

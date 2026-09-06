@@ -54,6 +54,20 @@ def test_viewer_nao_cria_projeto(client, db):
     assert response.status_code == 403
 
 
+def test_criar_target_interno_retorna_400(client, db):
+    user = make_user(db, "internal-target@recon.com")
+    project = make_project(db, user)
+
+    response = client.post(
+        f"/api/v1/projects/{project.id}/targets",
+        json={"value": "10.0.0.1"},
+        headers=auth_headers(db, user),
+    )
+
+    assert response.status_code == 400
+    assert "interno" in response.json()["detail"]
+
+
 def test_get_projeto_de_outro_usuario_retorna_404(client, db):
     owner = make_user(db, "project-owner@recon.com")
     other = make_user(db, "project-other@recon.com")

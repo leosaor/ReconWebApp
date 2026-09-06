@@ -4,7 +4,10 @@ from urllib.parse import urlparse
 from celery.exceptions import SoftTimeLimitExceeded
 
 from app.core.celery_app import celery_app
+from app.core.config import settings
+from app.core.validation import is_public_target_allowed
 from app.db.session import SessionLocal
+from app.models.audit_log import AuditLog
 from app.models.scan import Scan, ScanStatus, ScanType
 from app.models.scan_result import ScanResult
 from app.services.artifacts import (
@@ -36,12 +39,19 @@ def _mark_running(db, scan: Scan) -> None:
     scan.status = ScanStatus.RUNNING
     scan.started_at = datetime.now(timezone.utc)
     db.commit()
+    _audit_scan_event(db, scan, "scan.start")
 
 
 def _mark_completed(db, scan: Scan) -> None:
     scan.status = ScanStatus.COMPLETED
     scan.finished_at = datetime.now(timezone.utc)
     db.commit()
+    _audit_scan_event(
+        db,
+        scan,
+        "scan.complete",
+        metadata={"result_count": _scan_result_count(db, scan)},
+    )
 
 
 def _mark_failed(db, scan: Scan, error: str) -> None:
@@ -49,6 +59,88 @@ def _mark_failed(db, scan: Scan, error: str) -> None:
     scan.error = error[:500]
     scan.finished_at = datetime.now(timezone.utc)
     db.commit()
+    _audit_scan_event(db, scan, "scan.fail", metadata={"error": scan.error})
+
+
+def _audit_scan_event(db, scan: Scan, action: str, metadata: dict | None = None) -> None:
+    enqueue_log = _scan_enqueue_log(db, scan)
+    payload = {
+        "scan_type": scan.scan_type.value,
+        "status": scan.status.value,
+        "target": scan.target.value,
+        "target_id": str(scan.target_id),
+        "project_id": str(scan.target.project_id),
+        "started_at": scan.started_at.isoformat() if scan.started_at else None,
+        "finished_at": scan.finished_at.isoformat() if scan.finished_at else None,
+        "duration_seconds": _scan_duration_seconds(scan),
+    }
+    if metadata:
+        payload.update(metadata)
+
+    db.add(
+        AuditLog(
+            user_id=enqueue_log.user_id if enqueue_log else None,
+            action=action,
+            entity="scan",
+            entity_id=str(scan.id),
+            ip_address=enqueue_log.ip_address if enqueue_log else None,
+            metadata_=payload,
+        )
+    )
+    db.commit()
+
+
+def _scan_enqueue_log(db, scan: Scan) -> AuditLog | None:
+    return (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.action == "scan.enqueue",
+            AuditLog.entity == "scan",
+            AuditLog.entity_id == str(scan.id),
+        )
+        .order_by(AuditLog.created_at.asc())
+        .first()
+    )
+
+
+def _scan_duration_seconds(scan: Scan) -> float | None:
+    if not scan.started_at or not scan.finished_at:
+        return None
+    return round((scan.finished_at - scan.started_at).total_seconds(), 3)
+
+
+def _scan_result_count(db, scan: Scan) -> int:
+    return db.query(ScanResult).filter(ScanResult.scan_id == scan.id).count()
+
+
+def _ensure_public_target(value: str, module_name: str) -> None:
+    if not settings.block_private_targets:
+        return
+    if not is_public_target_allowed(
+        value,
+        resolve_dns=settings.resolve_target_dns_for_private_ip_check,
+    ):
+        raise RuntimeError(f"Target interno/local nao permitido para {module_name}: {value}")
+
+
+def _public_targets(values: list[str]) -> list[str]:
+    if not settings.block_private_targets:
+        return values
+    return [
+        value
+        for value in values
+        if is_public_target_allowed(
+            value,
+            resolve_dns=settings.resolve_target_dns_for_private_ip_check,
+        )
+    ]
+
+
+def _require_public_targets(values: list[str], module_name: str) -> list[str]:
+    filtered = _public_targets(values)
+    if not filtered:
+        raise RuntimeError(f"Nenhum target publico valido encontrado para {module_name}.")
+    return filtered
 
 
 def _persist_results(db, scan: Scan, subdomains: list[str]) -> None:
@@ -114,7 +206,7 @@ def _aggregate_targets(db, scan: Scan) -> list[str]:
         if key not in seen:
             seen.add(key)
             targets.append(subdomain)
-    return targets
+    return _require_public_targets(targets, "HTTP Probe")
 
 
 def _hosts_from_urls(urls: list[str]) -> list[str]:
@@ -181,12 +273,16 @@ def _http_200_urls_from_results(db, scan: Scan) -> list[str]:
 def _http_200_urls_for_scan(db, scan: Scan) -> list[str] | None:
     http_200_urls = read_http_200_urls(scan.target)
     if http_200_urls:
-        return http_200_urls
+        public_urls = _public_targets(http_200_urls)
+        if public_urls != http_200_urls:
+            write_http_200_urls(scan.target, public_urls)
+        return public_urls
 
     result_urls = _http_200_urls_from_results(db, scan)
     if result_urls:
-        write_http_200_urls(scan.target, result_urls)
-        return result_urls
+        public_urls = _public_targets(result_urls)
+        write_http_200_urls(scan.target, public_urls)
+        return public_urls
 
     return http_200_urls
 
@@ -201,6 +297,7 @@ def run_subdomain_enum(self, scan_id: str) -> dict:
             return {"scan_id": scan_id, "status": "missing"}
 
         _mark_running(db, scan)
+        _ensure_public_target(scan.target.value, "Subdomain")
         domain = scan.target.value
         subdomains = run_subfinder(domain)
         _persist_results(db, scan, subdomains)
@@ -378,6 +475,7 @@ def run_domain_spoofing_task(self, scan_id: str) -> dict:
             return {"scan_id": scan_id, "status": "missing"}
 
         _mark_running(db, scan)
+        _ensure_public_target(scan.target.value, "Domain Spoofing")
         results = run_domain_spoofing(scan.target.value)
         db.bulk_save_objects(
             [ScanResult(scan_id=scan.id, value=r["check"], data=r) for r in results]
@@ -507,6 +605,7 @@ def run_nuclei_scan(self, scan_id: str) -> dict:
             return {"scan_id": scan_id, "status": "missing"}
 
         _mark_running(db, scan)
+        _ensure_public_target(scan.target.value, "Nuclei")
         output_file = nuclei_scan_path(scan.target)
         results = run_nuclei(scan.target.value, output_file)
         for result in results:
