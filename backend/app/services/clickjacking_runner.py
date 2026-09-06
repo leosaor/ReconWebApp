@@ -4,7 +4,7 @@ from typing import Any
 import requests
 from playwright.sync_api import sync_playwright
 
-from app.core.validation import validate_target_value
+from app.core.validation import validate_target_url_or_value
 
 HTTP_TIMEOUT = 15
 BROWSER_WAIT_MS = 4000
@@ -52,7 +52,7 @@ def _build_html(url: str, vulnerable: bool) -> str:
 
 
 def run_clickjacking(target: str) -> list[dict[str, Any]]:
-    validate_target_value(target)
+    validate_target_url_or_value(target)
     url = target if target.startswith("http") else f"https://{target}"
     protected, xfo, frame_ancestors = _check_headers(url)
     vulnerable = not protected

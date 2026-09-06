@@ -5,13 +5,13 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
-from app.core.validation import validate_target_value
+from app.core.validation import validate_target_url_or_value
 
 SHCHECK_TIMEOUT = 60
 
 
 def run_shcheck(target: str) -> list[dict[str, Any]]:
-    validate_target_value(target)
+    validate_target_url_or_value(target)
     url = target if target.startswith("http") else f"{target}"
     result = subprocess.run(
         ["shcheck.py", "-d", url],
