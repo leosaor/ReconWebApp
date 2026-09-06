@@ -3,6 +3,7 @@ import uuid
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.config import settings
 from app.models.project import Project
 from app.models.scan import Scan, ScanStatus, ScanType
 from app.models.scan_result import ScanResult
@@ -108,8 +109,10 @@ def delete_target(db: Session, target: Target) -> None:
 
 
 def create_scan_and_enqueue(
-    db: Session, target: Target, scan_type: ScanType
+    db: Session, target: Target, scan_type: ScanType, current_user: User
 ) -> Scan:
+    _enforce_active_scan_limits(db, target, current_user)
+
     scan = Scan(target_id=target.id, scan_type=scan_type, status=ScanStatus.PENDING)
     db.add(scan)
     db.commit()
@@ -150,3 +153,31 @@ def create_scan_and_enqueue(
         run_nuclei_scan.delay(str(scan.id))
 
     return scan
+
+
+def _enforce_active_scan_limits(db: Session, target: Target, current_user: User) -> None:
+    active_statuses = [ScanStatus.PENDING, ScanStatus.RUNNING]
+    active_for_target = (
+        db.query(Scan)
+        .filter(Scan.target_id == target.id, Scan.status.in_(active_statuses))
+        .count()
+    )
+    if active_for_target >= settings.max_active_scans_per_target:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Limite de scans ativos para este target atingido",
+        )
+
+    active_for_user_query = (
+        db.query(Scan)
+        .join(Target, Scan.target_id == Target.id)
+        .join(Project, Target.project_id == Project.id)
+        .filter(Scan.status.in_(active_statuses))
+    )
+    if current_user.role != UserRole.ADMIN:
+        active_for_user_query = active_for_user_query.filter(Project.owner_id == current_user.id)
+    if active_for_user_query.count() >= settings.max_active_scans_per_user:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Limite de scans ativos atingido",
+        )

@@ -30,6 +30,12 @@ class Settings(BaseSettings):
 
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
+    bootstrap_admin_email: str | None = None
+    bootstrap_admin_password: str | None = None
+    bootstrap_admin_full_name: str | None = None
+    max_active_scans_per_user: int = 8
+    max_active_scans_per_target: int = 3
+    scan_create_rate_limit: str = "20/minute"
 
     @property
     def is_production(self) -> bool:
@@ -50,6 +56,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_production_secrets(self) -> "Settings":
+        if bool(self.bootstrap_admin_email) != bool(self.bootstrap_admin_password):
+            raise ValueError(
+                "BOOTSTRAP_ADMIN_EMAIL e BOOTSTRAP_ADMIN_PASSWORD devem ser definidos juntos"
+            )
+        if self.bootstrap_admin_password and len(self.bootstrap_admin_password) < 12:
+            raise ValueError(
+                "BOOTSTRAP_ADMIN_PASSWORD deve ter pelo menos 12 caracteres"
+            )
         if not self.is_production:
             return self
         if self.secret_key == _INSECURE_SECRET:

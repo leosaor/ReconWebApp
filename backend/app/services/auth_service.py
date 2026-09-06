@@ -5,6 +5,7 @@ import sqlalchemy as sa
 from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -25,20 +26,53 @@ def register_user(payload: RegisterRequest, db: Session, request: Request) -> st
     if db.query(User).filter(User.email == payload.email).first():
         return _REGISTER_MESSAGE
 
-    is_first_user = db.query(User).count() == 0
     user = User(
         id=uuid.uuid4(),
         email=payload.email,
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
-        role=UserRole.ADMIN if is_first_user else UserRole.VIEWER,
-        is_active=is_first_user,
+        role=UserRole.VIEWER,
+        is_active=False,
     )
     db.add(user)
     db.flush()
     _audit(db, user_id=user.id, action="user.register", entity="user", entity_id=str(user.id), request=request)
     db.commit()
     return _REGISTER_MESSAGE
+
+
+def ensure_bootstrap_admin(db: Session) -> None:
+    if not settings.bootstrap_admin_email or not settings.bootstrap_admin_password:
+        return
+
+    email = settings.bootstrap_admin_email.strip().lower()
+    user = db.query(User).filter(sa.func.lower(User.email) == email).first()
+    if user:
+        changed = False
+        if user.role != UserRole.ADMIN:
+            user.role = UserRole.ADMIN
+            changed = True
+        if not user.is_active:
+            user.is_active = True
+            changed = True
+        if settings.bootstrap_admin_full_name and user.full_name != settings.bootstrap_admin_full_name:
+            user.full_name = settings.bootstrap_admin_full_name
+            changed = True
+        if changed:
+            db.commit()
+        return
+
+    db.add(
+        User(
+            id=uuid.uuid4(),
+            email=email,
+            hashed_password=hash_password(settings.bootstrap_admin_password),
+            full_name=settings.bootstrap_admin_full_name,
+            role=UserRole.ADMIN,
+            is_active=True,
+        )
+    )
+    db.commit()
 
 
 def login_user(payload: LoginRequest, db: Session, request: Request) -> tuple[TokenResponse, str]:

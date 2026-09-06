@@ -1,10 +1,12 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_db, require_writer
+from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.models.scan import ScanType
 from app.models.user import User
 from app.schemas.scan import ScanCreate, ScanResponse, ScanResultResponse
@@ -15,14 +17,16 @@ router = APIRouter(prefix="/api/v1", tags=["scans"])
 
 
 @router.post("/targets/{target_id}/scans", response_model=ScanResponse, status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit(settings.scan_create_rate_limit)
 def create_scan(
+    request: Request,
     target_id: uuid.UUID,
     body: ScanCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_writer),
 ):
     target = recon_service.get_target_or_404(db, target_id, current_user)
-    return recon_service.create_scan_and_enqueue(db, target, body.scan_type)
+    return recon_service.create_scan_and_enqueue(db, target, body.scan_type, current_user)
 
 
 @router.get("/targets/{target_id}/scans", response_model=list[ScanResponse])

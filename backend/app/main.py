@@ -6,6 +6,8 @@ from slowapi.errors import RateLimitExceeded
 from app.api.routes import auth, health, projects, scans, users
 from app.core.config import settings
 from app.core.rate_limit import limiter
+from app.db.session import SessionLocal
+from app.services.auth_service import ensure_bootstrap_admin
 
 
 def create_app() -> FastAPI:
@@ -27,6 +29,15 @@ def create_app() -> FastAPI:
     app.include_router(users.router)
     app.include_router(projects.router)
     app.include_router(scans.router)
+
+    @app.on_event("startup")
+    def bootstrap_admin() -> None:
+        db = SessionLocal()
+        try:
+            ensure_bootstrap_admin(db)
+        finally:
+            db.close()
+
     return app
 
 
